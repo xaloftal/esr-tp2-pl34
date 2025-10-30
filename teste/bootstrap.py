@@ -4,7 +4,7 @@ import os
 
 NODES_FILE = "nodes.json"
 HOST = "0.0.0.0"
-PORT = 8000
+PORT = 7000
 
 
 def load_nodes():

@@ -2,7 +2,7 @@ import socket
 import threading
 
 HOST = '0.0.0.0'   # aceita ligações de qualquer IP
-PORT = 6000        # certifica-te que o client usa a mesma porta
+PORT = 8000        # certifica-te que o client usa a mesma porta
 
 # Função que vai tratar cada cliente numa thread diferente
 def handle_client(conn, addr):

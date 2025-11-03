@@ -36,5 +36,13 @@ def bootstrapper_server(host="0.0.0.0", port=5000):
         thread = threading.Thread(target=handle_node, args=(conn, addr))
         thread.start()
 
+def stream_video(video_path, neighbors):
+    with open(video_path, "rb") as f:
+        while chunk := f.read(1024):
+            for ip, port in neighbors:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sock.sendto(chunk, (ip, port))
+
+
 if __name__ == "__main__":
     bootstrapper_server()

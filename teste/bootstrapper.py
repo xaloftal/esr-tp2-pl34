@@ -1,7 +1,38 @@
 import socket
 import threading
+import cv2
+import time
 
 connected_nodes = []  # lista de (ip, port)
+
+def stream_video(video_path, neighbors):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    cap = cv2.VideoCapture(video_path)
+
+    if not cap.isOpened():
+        print("[BOOT] Erro a abrir o vídeo!")
+        return
+
+    print("[BOOT] A enviar vídeo para vizinhos...")
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            print("[BOOT] Fim do vídeo.")
+            break
+
+        # codificar frame como JPEG
+        _, buffer = cv2.imencode('.jpg', frame)
+        data = buffer.tobytes()
+
+        # enviar para todos os vizinhos
+        for ip, port in neighbors:
+            sock.sendto(data, (ip, port))
+
+        time.sleep(1/25)  # ~25 FPS
+
+    cap.release()
+    sock.close()
+
 
 def handle_node(conn, addr):
     global connected_nodes
@@ -21,6 +52,10 @@ def handle_node(conn, addr):
     # Enviar ao node apenas os seus vizinhos
     neighbors = ring[addr]
     conn.send(str(neighbors).encode())
+    
+    if len(connected_nodes) > 1:
+        # exemplo: começar a stream assim que houver 2 ou mais nós
+        stream_video("videoRonaldo.mov", [connected_nodes[1]])
 
     conn.close()
 

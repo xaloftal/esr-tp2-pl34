@@ -1,11 +1,9 @@
 import socket
 import threading
-import cv2
-import numpy as np
 
-BOOTSTRAPPER_IP = "10.0.0.20"  # muda para o IP do bootstrapper
+BOOTSTRAPPER_IP = "10.0.0.20"  # muda para o IP do bootstrapper no CORE
 BOOTSTRAPPER_PORT = 5000
-UDP_PORT = 6000  # porta onde este node vai receber frames
+UDP_PORT = 6000
 
 neighbors = []
 
@@ -17,23 +15,24 @@ def join_overlay():
 
     data = s.recv(1024).decode()
     print("[NODE] Neighbors received:", data)
-    neighbors = eval(data)  # converte a string enviada para tuplo/lista
+    neighbors = eval(data)
     s.close()
 
 def listen_udp():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("0.0.0.0", UDP_PORT))
     print(f"[NODE] Listening for video on UDP {UDP_PORT}...")
-    while True:
-        data, _ = sock.recvfrom(65536)
-        npdata = np.frombuffer(data, dtype=np.uint8)
-        frame = cv2.imdecode(npdata, cv2.IMREAD_COLOR)
-        if frame is not None:
-            cv2.imshow("Video Ronaldo", frame)
-            if cv2.waitKey(1) == ord('q'):
+
+    frame_count = 0
+    with open("received_video.mjpeg", "ab") as f:
+        while True:
+            data, _ = sock.recvfrom(65536)
+            if not data:
                 break
-    sock.close()
-    cv2.destroyAllWindows()
+            f.write(data)
+            frame_count += 1
+            if frame_count % 100 == 0:
+                print(f"[NODE] Recebidas {frame_count} frames...")
 
 if __name__ == "__main__":
     join_overlay()

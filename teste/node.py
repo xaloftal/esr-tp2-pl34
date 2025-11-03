@@ -14,5 +14,15 @@ def join_overlay():
 
     s.close()
 
+def listen_and_forward(my_port, neighbors):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind(("0.0.0.0", my_port))
+    while True:
+        data, _ = sock.recvfrom(1024)
+        # reenviar para os vizinhos
+        for ip, port in neighbors:
+            sock.sendto(data, (ip, port))
+
+
 if __name__ == "__main__":
     join_overlay()

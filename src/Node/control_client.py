@@ -1,25 +1,31 @@
 # control_client.py
-import socket, pickle
+import os, sys
+# adiciona o caminho da pasta Bootstrapper ao PYTHONPATH
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'Bootstrapper')))
 
-BOOTSTRAP_IP = "10.0.18.21"
-BOOTSTRAP_PORT = 5000
+import socket
+import config  # agora importa o config diretamente
 
-def register_node(node_id, node_ip, control_port):
-    """Regista o nó no bootstrapper."""
-    msg = {
-        "type": "REGISTER",
-        "node_id": node_id,
-        "node_ip": node_ip,
-        "control_port": control_port,
-    }
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.connect((BOOTSTRAP_IP, BOOTSTRAP_PORT))
-        s.sendall(pickle.dumps(msg))
-    print(f"[{node_id}] registado no bootstrapper.")
+# Função para registar o nó com o Bootstrapper
+def register_with_bootstrapper(node_ip):
+    client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    client.connect((config.HOST, config.PORT))
+    print(f"[CTRL] Connected to Bootstrapper at {config.HOST}:{config.PORT}")
 
-def send_message(ip, port, msg):
-    """Envia uma mensagem a outro nó."""
-    data = pickle.dumps(msg)
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.connect((ip, port))
-        s.sendall(data)
+    # Envia o registo
+    message = f"REGISTER {node_ip}"
+    client.send(message.encode())
+
+    # Recebe resposta
+    response = client.recv(4096).decode()
+    client.close()
+    return response
+
+def send_message(target_ip, target_port, message):
+    try:
+        client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        client.connect((target_ip, target_port))
+        client.send(message.encode())
+        client.close()
+    except Exception as e:
+        print(f"[CLIENT] erro a enviar para {target_ip}:{target_port} -> {e}")

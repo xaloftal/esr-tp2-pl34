@@ -1,7 +1,16 @@
 # overlay_nodes.py
+# topologia_core.py
+
 node_overlay = {
-    "node_ip": ["node_ip2", "node_ip3"],
-    "node_ip2": ["node_ip", "node_ip4"],
-    "node_ip3": ["node_ip"],
-    "node_ip4": ["node_ip2"]
+    # ---------------- Routers ----------------
+    "R1": ["R2", "R3", "R6"],          
+    "R2": ["R1", "R3", "R4"],        
+    "R3": ["R1", "R2", "R5", "R6"],  
+    "R4": ["R2", "R5"],          
+    "R5": ["R3", "R4", "R7", "R8"],    
+    "R6": ["R1", "R3", "R8", "R9"],    
+    "R7": ["R5", "R8", "R10"],       
+    "R8": ["R5", "R6", "R7", "R9"], 
+    "R9": ["R6", "R8", "R10"],   
+    "R10": ["R7", "R9"],           
 }

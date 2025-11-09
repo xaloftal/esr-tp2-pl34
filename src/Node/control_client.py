@@ -1,18 +1,25 @@
-import socket
-import Bootstrapper.config as config
+# control_client.py
+import socket, pickle
 
-# Função para registar o nó com o Bootstrapper
-def register_with_bootstrapper(node_ip):
-    client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    client.connect((config.HOST, config.PORT))
-    print(f"[CTRL] Connected to Bootstrapper at {config.HOST}:{config.PORT}")
+BOOTSTRAP_IP = "127.0.0.1"
+BOOTSTRAP_PORT = 5000
 
-    # Envia o registo
-    message = f"REGISTER {node_ip}"
-    client.send(message.encode())
+def register_node(node_id, node_ip, control_port):
+    """Regista o nó no bootstrapper (sem pedir vizinhos)."""
+    msg = {
+        "type": "REGISTER",
+        "node_id": node_id,
+        "node_ip": node_ip,
+        "control_port": control_port,
+    }
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.connect((BOOTSTRAP_IP, BOOTSTRAP_PORT))
+        s.sendall(pickle.dumps(msg))
+    print(f"[{node_id}] registado no bootstrapper.")
 
-    # Recebe resposta
-    response = client.recv(4096).decode()
-    client.close()
-
-    return response
+def send_message(ip, port, msg):
+    """Envia uma mensagem a outro nó."""
+    data = pickle.dumps(msg)
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.connect((ip, port))
+        s.sendall(data)

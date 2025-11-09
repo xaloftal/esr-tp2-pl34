@@ -1,11 +1,11 @@
 # control_client.py
 import socket, pickle
 
-BOOTSTRAP_IP = "127.0.0.1"
+BOOTSTRAP_IP = "10.0.18.21"
 BOOTSTRAP_PORT = 5000
 
 def register_node(node_id, node_ip, control_port):
-    """Regista o nó no bootstrapper (sem pedir vizinhos)."""
+    """Regista o nó no bootstrapper."""
     msg = {
         "type": "REGISTER",
         "node_id": node_id,

@@ -1,56 +1,23 @@
-# node.py
-import uuid, threading
-from control_server import ControlServer
-import control_client
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-class Node:
-    def __init__(self, node_id, node_ip, control_port):
-        self.node_id = node_id
-        self.node_ip = node_ip
-        self.control_port = control_port
-        self.neighbors = []  # lista de dicts: {"node_id": ..., "node_ip": ..., "control_port": ...}
-        self.received_msgs = set()
+from Node.control_client import register_with_bootstrapper
 
-    def start(self):
-        # 1️⃣ arranca o servidor
-        threading.Thread(target=ControlServer(self).start, daemon=True).start()
+def start_node(node_ip):
+    print(f"[NODE {node_ip}] Starting node...")
 
-        # 2️⃣ regista-se no bootstrapper
-        control_client.register_node(self.node_id, self.node_ip, self.control_port)
+    # Passo 1: contactar bootstrapper
+    neighbors = register_with_bootstrapper(node_ip)
+    print(f"[NODE {node_ip}] Received neighbors: {neighbors}")
 
-    # adicionar vizinho manualmente
-    def add_neighbor(self, node_id, node_ip, control_port):
-        self.neighbors.append({
-            "node_id": node_id,
-            "node_ip": node_ip,
-            "control_port": control_port
-        })
-        print(f"[{self.node_id}] adicionou vizinho {node_id}@{node_ip}:{control_port}")
+    # Passo 2: abrir servidor  → receber HELLO
+    # Passo 3: criar threads de envio de HELLO para cada vizinho
 
-    def send_message(self, target, content):
-        msg = {
-            "type": "HELLO",
-            "msg_id": str(uuid.uuid4()),
-            "source": self.node_id,
-            "target": target,
-            "content": content,
-            "path": [self.node_id],
-        }
-        self.received_msgs.add(msg["msg_id"])
-        self.broadcast(msg)
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        print("Usage: python3 node.py <node_ip>")
+        sys.exit(1)
 
-    def broadcast(self, msg):
-        for n in self.neighbors:
-            try:
-                control_client.send_message(n["node_ip"], n["control_port"], msg)
-            except Exception as e:
-                print(f"[{self.node_id}] erro a enviar para {n['node_id']}: {e}")
-
-    def forward_message(self, msg):
-        msg["path"] = msg.get("path", []) + [self.node_id]
-        for n in self.neighbors:
-            if n["node_id"] not in msg["path"]:
-                try:
-                    control_client.send_message(n["node_ip"], n["control_port"], msg)
-                except Exception:
-                    pass
+    node_ip = sys.argv[1]
+    start_node(node_ip)

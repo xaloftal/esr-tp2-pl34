@@ -96,9 +96,9 @@ class ControlClient:
 if __name__ == "__main__":
     import threading
 
-    MY_IP = "127.0.0.1"
+    MY_IP = "10.0.18.21"
     MY_PORT = 5001
-    TARGET_IP = "127.0.0.1"
+    TARGET_IP = "10.0.18.21"
     TARGET_PORT = 5002
 
     client = ControlClient(MY_IP, control_port=MY_PORT)

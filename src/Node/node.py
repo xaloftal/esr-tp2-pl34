@@ -1,45 +1,95 @@
-# node.py
-import sys, os
 import threading
 import time
-from control_client import register_with_bootstrapper, send_message
+import socket
+from control_client import ControlClient
 from control_server import ControlServer
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'Bootstrapper')))
 
-from overlay_nodes import node_overlay  # ajusta o caminho se precisares
 
-def start_node(node_id, node_ip, control_port):
-    print(f"[{node_id}] a iniciar...")
+class Node:
+    def __init__(self, node_id, node_ip, control_port, target_ip, target_port):
+        self.node_id = node_id
+        self.node_ip = node_ip
+        self.control_port = control_port
+        self.target_ip = target_ip
+        self.target_port = target_port
 
-    #  Registar no bootstrapper
-    register_with_bootstrapper(node_ip)
+        self.client = ControlClient(node_ip, control_port)
+        self.server = None
+        self.server_thread = None
+        self.running = True
 
-    # Iniciar servidor antes de enviar
-    server = ControlServer(node_id, node_ip, control_port)
-    threading.Thread(target=server.start, daemon=True).start()
-    time.sleep(5)  # tempo para garantir que o servidor está mesmo a ouvir
+    # --------------------------
+    def start_server(self):
+        if self.server_thread and self.server_thread.is_alive():
+            print(f"[{self.node_id}] Servidor já está ativo.")
+            return
 
-    # Carregar vizinhos
-    if node_ip in node_overlay:
-        neighbors = node_overlay[node_ip]
-    else:
-        neighbors = []
-    print(f"[{node_id}] vizinhos: {neighbors}")
+        def run_server():
+            self.server = ControlServer(self.node_id, self.node_ip, self.control_port)
+            self.server.start()
 
-    # Enviar mensagens de teste
-    for neighbor_ip in neighbors:
-        msg = f"Olá do {node_id} para {neighbor_ip}"
-        print(f"[{node_id}] a enviar para {neighbor_ip}: {msg}")
-        send_message(neighbor_ip, control_port, msg)
+        self.server_thread = threading.Thread(target=run_server, daemon=True)
+        self.server_thread.start()
+        time.sleep(0.5)
+        print(f"[{self.node_id}] Servidor TCP iniciado em {self.node_ip}:{self.control_port}")
 
-    # manter o nó vivo
-    print(f"[{node_id}] pronto e à escuta.")
-    while True:
-        time.sleep(1)
+    # --------------------------
+    def stop_server(self):
+        if not self.server:
+            print(f"[{self.node_id}] Servidor não está ativo.")
+            return
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.connect((self.node_ip, self.control_port))
+                s.send(b"STOP")
+            print(f"[{self.node_id}] Servidor parado com sucesso.")
+        except Exception:
+            print(f"[{self.node_id}] Não foi possível parar o servidor.")
+        self.server = None
+
+    # --------------------------
+    def run_menu(self):
+        print("\n=== MODO INTERATIVO ===")
+        print("0 → Enviar mensagem")
+        print("1 → Sair")
+        print("2 → Iniciar servidor TCP (ficar à escuta)")
+        print("3 → Parar servidor TCP\n")
+
+        while self.running:
+            choice = input(f"[{self.node_id}] Escolhe uma opção (0/1/2/3): ").strip()
+
+            if choice == "0":
+                msg = input("Mensagem a enviar: ")
+                self.client.send_message(self.target_ip, self.target_port, msg)
+
+            elif choice == "1":
+                print(f"[{self.node_id}] A encerrar...")
+                self.running = False
+                self.stop_server()
+                break
+
+            elif choice == "2":
+                self.start_server()
+
+            elif choice == "3":
+                self.stop_server()
+
+            else:
+                print("⚠️ Opção inválida. Usa 0, 1, 2 ou 3.")
+
+
+def main():
+    print("=== Configuração do Nó ===")
+    node_id = input("ID do nó (ex: Node-1): ").strip()
+    node_ip = input("IP local (ex: 127.0.0.1): ").strip()
+    control_port = int(input("Porto local (ex: 5001): ").strip())
+    target_ip = input("IP destino (ex: 127.0.0.1): ").strip()
+    target_port = int(input("Porto destino (ex: 5002): ").strip())
+
+    node = Node(node_id, node_ip, control_port, target_ip, target_port)
+    node.client.register_with_bootstrapper()
+    node.run_menu()
+
 
 if __name__ == "__main__":
-    if len(sys.argv) != 4:
-        print("Uso: python3 node.py <node_id> <node_ip> <control_port>")
-        sys.exit(1)
-    node_id, node_ip, control_port = sys.argv[1], sys.argv[2], int(sys.argv[3])
-    start_node(node_id, node_ip, control_port)
+    main()

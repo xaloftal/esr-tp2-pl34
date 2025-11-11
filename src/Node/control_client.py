@@ -94,6 +94,45 @@ class ControlClient:
 
 
 if __name__ == "__main__":
-    client = ControlClient("localhost")  # ip do nó
+    import threading
+
+    MY_IP = "127.0.0.1"
+    MY_PORT = 5001
+    TARGET_IP = "127.0.0.1"
+    TARGET_PORT = 5002
+
+    client = ControlClient(MY_IP, control_port=MY_PORT)
     client.register_with_bootstrapper()
-    client.send_message("localhost", 5001, "HELLO FROM CLIENT")
+
+    print("\n=== MODO INTERATIVO ===")
+    print("0 → Enviar mensagem")
+    print("1 → Sair")
+    print("2 → Ficar à escuta\n")
+
+    listening_thread = None
+
+    while True:
+        choice = input("Escolhe uma opção (0/1/2): ").strip()
+
+        # 0 - Enviar mensagem
+        if choice == "0":
+            msg = input("Mensagem a enviar: ")
+            client.send_message(TARGET_IP, TARGET_PORT, msg)
+
+        # 1 - Sair
+        elif choice == "1":
+            print("[CLIENTE] Encerrando...")
+            break
+
+        # 2 - Ficar à escuta
+        elif choice == "2":
+            if listening_thread is None or not listening_thread.is_alive():
+                print("[CLIENTE] A iniciar servidor TCP...")
+                listening_thread = threading.Thread(
+                    target=client.start_tcp_server, daemon=True
+                )
+                listening_thread.start()
+            else:
+                print("[CLIENTE] Já está à escuta.")
+        else:
+            print("Opção inválida. Usa 0, 1 ou 2.")

@@ -1,95 +1,234 @@
+# node.py
+import sys
+import os
+import socket
+import json
 import threading
 import time
-import socket
-from control_client import ControlClient
-from control_server import ControlServer
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from Proto.aux_message import MessageType, create_message, parse_message, get_message_type
 
 
 class Node:
-    def __init__(self, node_id, node_ip, control_port, target_ip, target_port):
+    def __init__(self, node_id, node_ip, bootstrapper_ip,
+                 bootstrapper_port=1000, tcpport=6000, udpport=7000):
         self.node_id = node_id
         self.node_ip = node_ip
-        self.control_port = control_port
-        self.target_ip = target_ip
-        self.target_port = target_port
+        self.tcpport = tcpport          # Porta única para controlo (FLOOD, ALIVE, STREAM_START, etc.)
+        self.udpport = udpport          # Porta única para streaming (UDP)
+        self.neighbors = self.register_with_bootstrapper(
+            node_ip, bootstrapper_ip, bootstrapper_port
+        )  # lista de IPs vizinhos
 
-        self.client = ControlClient(node_ip, control_port)
-        self.server = None
-        self.server_thread = None
-        self.running = True
+        self.routing_table = {}         # {destination_ip: next_hop_ip}
+        self.flood_cache = set()        # IDs de floods já vistos
+        self.lock = threading.Lock()
+        self.last_alive = {}            # {ip: timestamp}
 
-    # --------------------------
-    def start_server(self):
-        if self.server_thread and self.server_thread.is_alive():
-            print(f"[{self.node_id}] Servidor já está ativo.")
-            return
+    # ------------------------------------------------------------------
+    #   REGISTO NO BOOTSTRAPPER
+    # ------------------------------------------------------------------
+    def register_with_bootstrapper(self, node_ip, bootstrapper_ip, bootstrapper_port):
+        """Regista o node no bootstrapper e obtém lista de vizinhos."""
+        client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        client.connect((bootstrapper_ip, bootstrapper_port))
+        print(f"[CTRL] Connected to Bootstrapper at {bootstrapper_ip}:{bootstrapper_port}")
 
-        def run_server():
-            self.server = ControlServer(self.node_id, self.node_ip, self.control_port)
-            self.server.start()
+        message = f"REGISTER {node_ip}\n"
+        client.sendall(message.encode())
 
-        self.server_thread = threading.Thread(target=run_server, daemon=True)
-        self.server_thread.start()
-        time.sleep(0.5)
-        print(f"[{self.node_id}] Servidor TCP iniciado em {self.node_ip}:{self.control_port}")
+        response = client.recv(4096).decode()
+        client.close()
 
-    # --------------------------
-    def stop_server(self):
-        if not self.server:
-            print(f"[{self.node_id}] Servidor não está ativo.")
-            return
         try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.connect((self.node_ip, self.control_port))
-                s.send(b"STOP")
-            print(f"[{self.node_id}] Servidor parado com sucesso.")
-        except Exception:
-            print(f"[{self.node_id}] Não foi possível parar o servidor.")
-        self.server = None
+            data = json.loads(response)
+            neighbors = data.get("neighbors", [])
+            print(f"[{self.node_id}] Neighbors from bootstrapper: {neighbors}")
+            return neighbors
+        except json.JSONDecodeError:
+            print(f"[{self.node_id}] Failed to parse bootstrapper response: {response}")
+            return []
 
-    # --------------------------
-    def run_menu(self):
-        print("\n=== MODO INTERATIVO ===")
-        print("0 → Enviar mensagem")
-        print("1 → Sair")
-        print("2 → Iniciar servidor TCP (ficar à escuta)")
-        print("3 → Parar servidor TCP\n")
+    # ------------------------------------------------------------------
+    #   JOIN / LEAVE
+    # ------------------------------------------------------------------
+    def join_overlay(self):
+        """Inicia listeners TCP e UDP."""
+        threading.Thread(target=self.start_tcp_listener, daemon=True).start()
+        threading.Thread(target=self.start_udp_listener, daemon=True).start()
+        print(f"[{self.node_id}] Joined overlay network.")
 
-        while self.running:
-            choice = input(f"[{self.node_id}] Escolhe uma opção (0/1/2/3): ").strip()
+    def leave_overlay(self):
+        """Placeholder para lógica de saída."""
+        print(f"[{self.node_id}] Leaving overlay network.")
+        # Aqui poderias enviar uma mensagem LEAVE, etc.
 
-            if choice == "0":
-                msg = input("Mensagem a enviar: ")
-                self.client.send_message(self.target_ip, self.target_port, msg)
+    # ------------------------------------------------------------------
+    #   LISTENERS
+    # ------------------------------------------------------------------
+    def start_tcp_listener(self):
+        """Listener para mensagens de controlo via TCP."""
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind((self.node_ip, self.tcpport))
+        server.listen()
+        print(f"[{self.node_id}] TCP listener on {self.node_ip}:{self.tcpport}")
 
-            elif choice == "1":
-                print(f"[{self.node_id}] A encerrar...")
-                self.running = False
-                self.stop_server()
-                break
+        while True:
+            conn, addr = server.accept()
+            threading.Thread(target=self.handle_tcp_message, args=(conn, addr), daemon=True).start()
 
-            elif choice == "2":
-                self.start_server()
+    def start_udp_listener(self):
+        """Listener para dados de stream via UDP."""
+        server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        server.bind((self.node_ip, self.udpport))
+        print(f"[{self.node_id}] UDP listener on {self.node_ip}:{self.udpport}")
 
-            elif choice == "3":
-                self.stop_server()
+        while True:
+            data, addr = server.recvfrom(65535)
+            threading.Thread(target=self.handle_udp_message, args=(data, addr), daemon=True).start()
 
+    # ------------------------------------------------------------------
+    #   ENVIO DE MENSAGENS
+    # ------------------------------------------------------------------
+    def send_tcp_message(self, dest_ip, msg_dict):
+        """Envia mensagem de controlo via TCP para dest_ip."""
+        try:
+            payload = json.dumps(msg_dict).encode()
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.connect((dest_ip, self.tcpport))
+                sock.sendall(payload)
+            print(f"[{self.node_id}] TCP sent to {dest_ip}: {msg_dict.get('msg_type')}")
+        except Exception as e:
+            print(f"[{self.node_id}] Error sending TCP to {dest_ip}: {e}")
+
+    def send_udp_message(self, dest_ip, data_bytes):
+        """Envia dados via UDP (por exemplo, chunks de vídeo)."""
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                sock.sendto(data_bytes, (dest_ip, self.udpport))
+        except Exception as e:
+            print(f"[{self.node_id}] Error sending UDP to {dest_ip}: {e}")
+
+    # ------------------------------------------------------------------
+    #   HANDLER TCP
+    # ------------------------------------------------------------------
+    def handle_tcp_message(self, conn, addr):
+        """Recebe e despacha mensagens TCP de controlo."""
+        try:
+            raw = conn.recv(65535)
+            if not raw:
+                print(f"[{self.node_id}] Empty TCP message from {addr}")
+                return
+
+            data = raw.decode()
+            print(f"[{self.node_id}] TCP received from {addr}: {data}")
+
+            msg = parse_message(data)
+            if not msg:
+                print(f"[{self.node_id}] Failed to parse message")
+                return
+
+            msg_type = get_message_type(msg)
+
+            # Despacho por tipo de mensagem
+            match msg_type:
+                case MessageType.FLOOD.value:
+                    self.handle_flood_message(msg, addr[0])
+                case MessageType.ALIVE.value:
+                    self.handle_alive_message(msg, addr[0])
+                case MessageType.JOIN.value:
+                    self.handle_join_message(msg, addr[0])
+                case MessageType.LEAVE.value:
+                    self.handle_leave_message(msg, addr[0])
+                case MessageType.STREAM_START.value:
+                    self.handle_stream_start_message(msg, addr[0])
+                case MessageType.STREAM_END.value:
+                    self.handle_stream_end_message(msg, addr[0])
+                case _:
+                    print(f"[{self.node_id}] Unknown message type: {msg_type}")
+
+        except Exception as e:
+            print(f"[{self.node_id}] TCP error receiving: {e}")
+        finally:
+            conn.close()
+
+    # ------------------------------------------------------------------
+    #   HANDLER UDP
+    # ------------------------------------------------------------------
+    def handle_udp_message(self, data, addr):
+        """Recebe mensagens UDP (tipicamente STREAM_DATA)."""
+        try:
+            msg = parse_message(data)
+            if not msg:
+                print(f"[{self.node_id}] Failed to parse UDP message")
+                return
+
+            msg_type = get_message_type(msg)
+
+            if msg_type == MessageType.STREAM_DATA.value:
+                self.handle_stream_data_message(msg, addr[0])
             else:
-                print("⚠️ Opção inválida. Usa 0, 1, 2 ou 3.")
+                print(f"[{self.node_id}] Unknown UDP message type: {msg_type}")
+        except Exception as e:
+            print(f"[{self.node_id}] UDP error receiving: {e}")
 
+    # ------------------------------------------------------------------
+    #   HANDLERS DE TIPOS DE MENSAGEM
+    # ------------------------------------------------------------------
+    def handle_flood_message(self, msg, sender_ip):
+        """Constrói routing_table com base no FLOOD."""
+        msg_id = msg.get("msg_id")
+        data = msg.get("data", {})
+        src_ip = msg.get("srcip")
+        hop_count = data.get("hop_count", 0)
 
-def main():
-    print("=== Configuração do Nó ===")
-    node_id = input("ID do nó (ex: Node-1): ").strip()
-    node_ip = input("IP local (ex: 127.0.0.1): ").strip()
-    control_port = int(input("Porto local (ex: 5001): ").strip())
-    target_ip = input("IP destino (ex: 127.0.0.1): ").strip()
-    target_port = int(input("Porto destino (ex: 5002): ").strip())
+        print(f"[{self.node_id}] Handling FLOOD from {sender_ip}, src={src_ip}, id={msg_id}")
 
-    node = Node(node_id, node_ip, control_port, target_ip, target_port)
-    node.client.register_with_bootstrapper()
-    node.run_menu()
+        with self.lock:
+            if msg_id in self.flood_cache:
+                print(f"[{self.node_id}] FLOOD {msg_id} already seen, ignoring.")
+                return
+            self.flood_cache.add(msg_id)
+            # Rota para a origem (src_ip) passa pelo sender_ip
+            if src_ip is not None:
+                self.routing_table[src_ip] = sender_ip
+                print(f"[{self.node_id}] Routing updated: {src_ip} -> {sender_ip}")
 
+        # Incrementar hop_count
+        data["hop_count"] = hop_count + 1
+        msg["data"] = data
 
-if __name__ == "__main__":
-    main()
+        # Encaminhar para outros vizinhos (menos o sender)
+        for neighbor_ip in self.neighbors:
+            if neighbor_ip == sender_ip:
+                continue
+            forward_msg = msg.copy()
+            forward_msg["destip"] = neighbor_ip
+            self.send_tcp_message(neighbor_ip, forward_msg)
+
+    def handle_alive_message(self, msg, sender_ip):
+        """Regista heartbeat do vizinho."""
+        timestamp = msg.get("data", {}).get("timestamp", time.time())
+        self.last_alive[sender_ip] = timestamp
+        print(f"[{self.node_id}] ALIVE from {sender_ip} at {timestamp}")
+
+    def handle_join_message(self, msg, sender_ip):
+        print(f"[{self.node_id}] Handling JOIN from {sender_ip}")
+        # Se quiseres, podes adicionar o sender à tabela de vizinhos ou afins
+
+    def handle_leave_message(self, msg, sender_ip):
+        print(f"[{self.node_id}] Handling LEAVE from {sender_ip}")
+        # Remover rotas ou marcar como inativo
+
+    def handle_stream_start_message(self, msg, sender_ip):
+        print(f"[{self.node_id}] Handling STREAM_START from {sender_ip}, data={msg.get('data')}")
+
+    def handle_stream_end_message(self, msg, sender_ip):
+        print(f"[{self.node_id}] Handling STREAM_END from {sender_ip}")
+
+    def handle_stream_data_message(self, msg, sender_ip):
+        print(f"[{self.node_id}] Handling STREAM_DATA from {sender_ip}")
+        # Aqui processas chunk de vídeo, etc.

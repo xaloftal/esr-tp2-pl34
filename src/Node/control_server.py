@@ -1,30 +1,72 @@
 # control_server.py
 import socket
+import json
 import threading
+import uuid
+import time
+import sys
+import os
 
-class ControlServer:
-    def __init__(self, node_id, node_ip, control_port):
-        self.node_id = node_id
-        self.node_ip = node_ip
-        self.control_port = control_port
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-    def start(self):
-        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        server.bind((self.node_ip, self.control_port))
-        server.listen()
-        print(f"[{self.node_id}] listening on {self.node_ip}:{self.control_port}")
+from Node.node import Node
+from Proto.aux_message import MessageType, create_message
 
-        while True:
-            conn, addr = server.accept()
-            threading.Thread(target=self.handle_client, args=(conn, addr), daemon=True).start()
 
-    def handle_client(self, conn, addr):
-        try:
-            data = conn.recv(1024).decode()
-            if data:
-                print(f"[{self.node_id}] recebeu de {addr}: {data}")
-        except Exception as e:
-            print(f"[{self.node_id}] erro a receber: {e}")
-        finally:
-            conn.close()
+class Server(Node):
+    def __init__(self, node_id, node_ip, bootstrapper_ip,
+                 bootstrapper_port=1000, tcpport=6000, udpport=7000,
+                 videosrc=None):
+        super().__init__(node_id, node_ip, bootstrapper_ip, bootstrapper_port,
+                         tcpport, udpport)
+        self.videosrc = videosrc  # caminho/identificador da fonte de vídeo
+
+    # -------------------------------------------------------------
+    # FLOOD
+    # -------------------------------------------------------------
+    def initiate_flood(self):
+        """Inicia um FLOOD para construir routing tables na rede."""
+        flood_id = str(uuid.uuid4())
+        print(f"[{self.node_id}] Initiating flood with ID: {flood_id}")
+
+        for neighbor_ip in self.neighbors:
+            msg = create_message(
+                msg_id=flood_id,
+                msg_type=MessageType.FLOOD,
+                srcip=self.node_ip,
+                destip=neighbor_ip,
+                data={
+                    "hop_count": 0
+                }
+            )
+            self.send_tcp_message(neighbor_ip, msg)
+
+        with self.lock:
+            self.flood_cache.add(flood_id)
+
+        print(f"[{self.node_id}] Flood initiated and sent to neighbors")
+
+    def manual_flood(self):
+        """Trigger manual de flood, por exemplo a partir da linha de comandos."""
+        print(f"\n[{self.node_id}] === Manual Flood Triggered ===")
+        self.initiate_flood()
+
+    # -------------------------------------------------------------
+    # STREAMING (esqueleto)
+    # -------------------------------------------------------------
+    def start_stream_to(self, dest_ip, stream_id="default"):
+        """
+        Exemplo: envia mensagem STREAM_START para dest_ip.
+        Depois, poderias iniciar envio de dados via UDP.
+        """
+        msg = create_message(
+            msg_id=str(uuid.uuid4()),
+            msg_type=MessageType.STREAM_START,
+            srcip=self.node_ip,
+            destip=dest_ip,
+            data={"stream_id": stream_id}
+        )
+        self.send_tcp_message(dest_ip, msg)
+        print(f"[{self.node_id}] STREAM_START sent to {dest_ip} for stream {stream_id}")
+        # Aqui poderias iniciar uma thread que lê frames de self.videosrc
+        # e envia via UDP com MessageType.STREAM_DATA

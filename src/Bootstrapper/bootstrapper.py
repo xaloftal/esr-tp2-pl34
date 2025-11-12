@@ -1,6 +1,8 @@
+# bootstrapper.py
 import socket
 import threading
-from config import HOST, PORT, N_vizinho
+import json
+from config import HOST, PORT
 from overlay_nodes import node_overlay
 
 
@@ -9,18 +11,22 @@ def handle_client(client_socket):
     print(f"[BOOT] Received: {request}")
 
     if request.startswith("REGISTER"):
-        node_ip = request.split()[-1]  # extrai o IP depois de REGISTER
-
-        # Lógica de vizinhos
-        if node_ip in node_overlay:
-            neighbors = node_overlay[node_ip]
-            response = f"Neighbors: {neighbors}"
+        # Exemplo de request: "REGISTER 10.0.0.1"
+        parts = request.split()
+        if len(parts) >= 2:
+            node_ip = parts[1]
+            neighbors = node_overlay.get(node_ip, [])
+            # ✅ Agora respondemos sempre em JSON
+            response_obj = {"neighbors": neighbors}
+            response = json.dumps(response_obj)
         else:
-            response = "No neighbors assigned."
+            response = json.dumps({"neighbors": []})
 
-        client_socket.send(response.encode())
+        client_socket.sendall(response.encode())
     else:
-        client_socket.send(b"ACK from Bootstrapper")
+        # Mensagens não-REGISTER (se quiseres usar no futuro)
+        response = json.dumps({"status": "OK", "message": "ACK from Bootstrapper"})
+        client_socket.sendall(response.encode())
 
     client_socket.close()
 

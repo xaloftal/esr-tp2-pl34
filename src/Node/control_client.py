@@ -1,138 +1,34 @@
 # control_client.py
-import os, sys, socket
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'Bootstrapper')))
-import config  # importa o ficheiro de configuração do bootstrapper
+import sys
+import os
+import uuid
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from Node.node import Node
+from Proto.aux_message import MessageType, create_message
 
 
-class ControlClient:
-    """
-    Cliente de controlo — comunica via TCP com o Bootstrapper e outros nós.
-    Responsável por registo, envio de mensagens de controlo e gestão de vizinhos.
-    """
-    def __init__(self, node_ip, control_port=5001):
-        self.node_ip = node_ip
-        self.control_port = control_port
-        self.bootstrapper_host = config.HOST
-        self.bootstrapper_port = config.PORT
-        self.neighbors = {}  # dicionário {ip: {'port': X, 'status': Y}}
-        print(f"[INIT] ControlClient iniciado no IP {self.node_ip}, porto {self.control_port}")
+class Client(Node):
+    """Cliente que consome streams e participa no overlay."""
 
-    # Registo no Bootstrapper
-    def register_with_bootstrapper(self):
-        """
-        Regista este nó no Bootstrapper via TCP.
-        """
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as client:
-                client.connect((self.bootstrapper_host, self.bootstrapper_port))
-                print(f"[CTRL] Conectado ao Bootstrapper em {self.bootstrapper_host}:{self.bootstrapper_port}")
+    def __init__(self, node_id, node_ip, bootstrapper_ip,
+                 bootstrapper_port=1000, tcpport=6000, udpport=7000):
+        super().__init__(node_id, node_ip, bootstrapper_ip, bootstrapper_port,
+                         tcpport, udpport)
 
-                # envia mensagem de registo
-                message = f"REGISTER {self.node_ip}"
-                client.send(message.encode())
+    # -------------------------------------------------------------
+    # PEDIR STREAM
+    # -------------------------------------------------------------
+    def request_stream(self, server_ip, stream_id="default"):
+        """Envia um pedido STREAM_START ao servidor."""
+        msg = create_message(
+            msg_id=str(uuid.uuid4()),
+            msg_type=MessageType.STREAM_START,
+            srcip=self.node_ip,
+            destip=server_ip,
+            data={"stream_id": stream_id, "requester_id": self.node_id}
+        )
+        self.send_tcp_message(server_ip, msg)
+        print(f"[{self.node_id}] Requested stream '{stream_id}' from {server_ip}")
 
-                # recebe resposta
-                response = client.recv(4096).decode()
-                print(f"[CTRL] Resposta do Bootstrapper: {response}")
-
-                # processa resposta (exemplo: lista de vizinhos)
-                if response.startswith("NEIGHBORS"):
-                    neighbors_data = response.split()[1:]  # ex: "NEIGHBORS ip1,ip2"
-                    for neighbor in neighbors_data:
-                        ip, port = neighbor.split(":")
-                        self.neighbors[ip] = {"port": int(port), "status": "active"}
-                    print(f"[CTRL] Vizinhos registados: {self.neighbors}")
-
-                return response
-
-        except Exception as e:
-            print(f"[ERROR] Falha ao registar no Bootstrapper: {e}")
-            return None
-
-    # Envio de Mensagens TCP
-    def send_message(self, target_ip, target_port, message):
-        """
-        Envia uma mensagem TCP para outro nó.
-        """
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as client:
-                client.connect((target_ip, target_port))
-                client.send(message.encode())
-                print(f"[TCP] Enviado para {target_ip}:{target_port} → {message}")
-        except Exception as e:
-            print(f"[ERROR] Erro a enviar para {target_ip}:{target_port}: {e}")
-
-
-    # Receção de Mensagens TCP
-    def start_tcp_server(self):
-        """
-        Cria um pequeno servidor TCP para receber mensagens de controlo de outros nós.
-        """
-        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server.bind((self.node_ip, self.control_port))
-        server.listen(5)
-        print(f"[CTRL] Servidor de controlo ativo em {self.node_ip}:{self.control_port}")
-
-        while True:
-            conn, addr = server.accept()
-            data = conn.recv(4096).decode()
-            print(f"[RECEBIDO] {addr}: {data}")
-            conn.close()
-
-    # -----------------------------
-    # 4️⃣ Envio de vídeo via UDP (exemplo futuro)
-    def send_video_packet(self, target_ip, target_port, data):
-        """
-        Exemplo de envio de dados (frames de vídeo) via UDP.
-        """
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp_sock:
-                udp_sock.sendto(data, (target_ip, target_port))
-                print(f"[UDP] Pacote de vídeo enviado para {target_ip}:{target_port}")
-        except Exception as e:
-            print(f"[ERROR] Falha ao enviar pacote UDP: {e}")
-
-
-if __name__ == "__main__":
-    import threading
-
-    MY_IP = "10.0.18.21"
-    MY_PORT = 5001
-    TARGET_IP = "10.0.18.21"
-    TARGET_PORT = 5002 
-
-    client = ControlClient(MY_IP, control_port=MY_PORT)
-    client.register_with_bootstrapper()
-
-    print("\n=== MODO INTERATIVO ===")
-    print("0 → Enviar mensagem")
-    print("1 → Sair")
-    print("2 → Ficar à escuta\n")
-
-    listening_thread = None
-
-    while True:
-        choice = input("Escolhe uma opção (0/1/2): ").strip()
-
-        # 0 - Enviar mensagem
-        if choice == "0":
-            msg = input("Mensagem a enviar: ")
-            client.send_message(TARGET_IP, TARGET_PORT, msg)
-
-        # 1 - Sair
-        elif choice == "1":
-            print("[CLIENTE] Encerrando...")
-            break
-
-        # 2 - Ficar à escuta
-        elif choice == "2":
-            if listening_thread is None or not listening_thread.is_alive():
-                print("[CLIENTE] A iniciar servidor TCP...")
-                listening_thread = threading.Thread(
-                    target=client.start_tcp_server, daemon=True
-                )
-                listening_thread.start()
-            else:
-                print("[CLIENTE] Já está à escuta.")
-        else:
-            print("Opção inválida. Usa 0, 1 ou 2.")

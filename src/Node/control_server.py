@@ -1,72 +1,131 @@
-# control_server.py
 import socket
+import sys
 import json
-import threading
 import uuid
 import time
-import sys
-import os
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
-from Node.node import Node
-from Proto.aux_message import MessageType, create_message
 
 
-class Server(Node):
-    def __init__(self, node_id, node_ip, bootstrapper_ip,
-                 bootstrapper_port=1000, tcpport=6000, udpport=7000,
-                 videosrc=None):
-        super().__init__(node_id, node_ip, bootstrapper_ip, bootstrapper_port,
-                         tcpport, udpport)
-        self.videosrc = videosrc  # caminho/identificador da fonte de vídeo
+class ControlServer:
 
-    # -------------------------------------------------------------
+    def __init__(self, node_id, node_ip, bootstrap_ip, bootstrap_port=5000, tcp_port=6000):
+        self.node_id = node_id
+        self.node_ip = node_ip
+        self.bootstrap_ip = bootstrap_ip
+        self.bootstrap_port = bootstrap_port
+        self.tcp_port = tcp_port
+
+        # Dicionário de vizinhos
+        self.neighbors = {}   # {ip: last_seen_timestamp}
+
+    # ============================================================
+    # REGISTER NO BOOTSTRAPPER
+    # ============================================================
+    def register_node(self):
+        msg = f"REGISTER {self.node_ip}"
+
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.connect((self.bootstrap_ip, self.bootstrap_port))
+                s.sendall(msg.encode())
+
+                response = s.recv(1024).decode()
+                data = json.loads(response)
+
+                print(f"[SERVER {self.node_id}] Registered at bootstrapper. Neighbors: {data['neighbors']}")
+
+                now = time.time()
+                for n in data["neighbors"]:
+                    self.neighbors[n] = now
+
+        except Exception as e:
+            print(f"[SERVER {self.node_id}] Error registering: {e}")
+
+    # ============================================================
     # FLOOD
-    # -------------------------------------------------------------
+    # ============================================================
     def initiate_flood(self):
-        """Inicia um FLOOD para construir routing tables na rede."""
         flood_id = str(uuid.uuid4())
-        print(f"[{self.node_id}] Initiating flood with ID: {flood_id}")
+
+        print(f"[SERVER {self.node_id}] Initiating flood ID={flood_id}")
+
+        msg = {
+            "type": "FLOOD",
+            "id": flood_id,
+            "src": self.node_id
+        }
 
         for neighbor_ip in self.neighbors:
-            msg = create_message(
-                msg_id=flood_id,
-                msg_type=MessageType.FLOOD,
-                srcip=self.node_ip,
-                destip=neighbor_ip,
-                data={
-                    "hop_count": 0
-                }
-            )
-            self.send_tcp_message(neighbor_ip, msg)
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.connect((neighbor_ip, self.tcp_port))
+                    s.sendall(json.dumps(msg).encode())
 
-        with self.lock:
-            self.flood_cache.add(flood_id)
+                print(f"[SERVER {self.node_id}] Flood sent to {neighbor_ip}")
 
-        print(f"[{self.node_id}] Flood initiated and sent to neighbors")
+            except Exception as e:
+                print(f"[SERVER {self.node_id}] Error sending flood to {neighbor_ip}: {e}")
 
-    def manual_flood(self):
-        """Trigger manual de flood, por exemplo a partir da linha de comandos."""
-        print(f"\n[{self.node_id}] === Manual Flood Triggered ===")
-        self.initiate_flood()
+    # ============================================================
+    # STREAM
+    # ============================================================
+    def start_stream(self, dest_ip, stream_id="default"):
+        msg = {
+            "type": "STREAM_START",
+            "stream_id": stream_id,
+            "src": self.node_id
+        }
 
-    # -------------------------------------------------------------
-    # STREAMING (esqueleto)
-    # -------------------------------------------------------------
-    def start_stream_to(self, dest_ip, stream_id="default"):
-        """
-        Exemplo: envia mensagem STREAM_START para dest_ip.
-        Depois, poderias iniciar envio de dados via UDP.
-        """
-        msg = create_message(
-            msg_id=str(uuid.uuid4()),
-            msg_type=MessageType.STREAM_START,
-            srcip=self.node_ip,
-            destip=dest_ip,
-            data={"stream_id": stream_id}
-        )
-        self.send_tcp_message(dest_ip, msg)
-        print(f"[{self.node_id}] STREAM_START sent to {dest_ip} for stream {stream_id}")
-        # Aqui poderias iniciar uma thread que lê frames de self.videosrc
-        # e envia via UDP com MessageType.STREAM_DATA
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.connect((dest_ip, self.tcp_port))
+                s.sendall(json.dumps(msg).encode())
+
+            print(f"[SERVER {self.node_id}] STREAM_START sent to {dest_ip}")
+
+        except Exception as e:
+            print(f"[SERVER {self.node_id}] Error starting stream: {e}")
+
+    # ============================================================
+    # MAIN COMMAND LOOP
+    # ============================================================
+    def run(self):
+        print(f"[SERVER {self.node_id}] Ready.")
+
+        while True:
+            cmd = input(f"[SERVER {self.node_id}] Enter command (flood/stream/exit): ").strip().lower()
+
+            if cmd == "flood":
+                self.initiate_flood()
+
+            elif cmd.startswith("stream"):
+                parts = cmd.split()
+                if len(parts) >= 2:
+                    dest_ip = parts[1]
+                    self.start_stream(dest_ip)
+                else:
+                    print("Usage: stream <dest_ip>")
+
+            elif cmd == "exit":
+                print(f"[SERVER {self.node_id}] Exiting server…")
+                break
+
+            else:
+                print("Commands: flood | stream <dest_ip> | exit")
+
+
+# ============================================================
+# MAIN
+# ============================================================
+if __name__ == "__main__":
+    if len(sys.argv) != 4:
+        print("Usage: python3 control_server.py NODE_ID NODE_IP BOOTSTRAPPER_IP")
+        sys.exit(1)
+
+    node_id = sys.argv[1]
+    node_ip = sys.argv[2]
+    bootstrap_ip = sys.argv[3]
+
+    server = ControlServer(node_id, node_ip, bootstrap_ip)
+
+    server.register_node()
+    server.run()

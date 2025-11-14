@@ -186,21 +186,67 @@ class Node:
     #   HANDLER UDP
     # ------------------------------------------------------------------
     def handle_udp_message(self, data, addr):
-        """Recebe mensagens UDP (tipicamente STREAM_DATA)."""
+        """Recebe e encaminha STREAM_DATA via UDP."""
         try:
-            msg = parse_message(data)
+            try:
+                text = data.decode("utf-8")
+            except:
+                print(f"[{self.node_id}] UDP decode error")
+                return
+
+            msg = parse_message(text)
             if not msg:
-                print(f"[{self.node_id}] Failed to parse UDP message")
+                print(f"[{self.node_id}] Invalid UDP message")
                 return
 
             msg_type = get_message_type(msg)
+            dest = msg.get("destip")
 
-            if msg_type == MessageType.STREAM_DATA.value:
-                self.handle_stream_data_message(msg, addr[0])
-            else:
-                print(f"[{self.node_id}] Unknown UDP message type: {msg_type}")
+            # ===========================================================
+            # 1) MENSAGEM TEST (possui apenas "text")
+            # ===========================================================
+            if msg_type == MessageType.STREAM_DATA.value and "text" in msg["data"]:
+
+                # É para mim? → mostrar
+                if dest == self.node_ip:
+                    print(f"[{self.node_id}] TEST message received: {msg['data']['text']}")
+                    return
+
+                # NÃO é para mim → reencaminhar
+                next_hop = self.routing_table.get(dest)
+                if not next_hop:
+                    print(f"[{self.node_id}] No route to {dest}")
+                    return
+
+                print(f"[{self.node_id}] Forwarding TEST to {dest} via {next_hop}")
+                self.send_udp_message(next_hop, data)
+                return
+
+
+            # ===========================================================
+            # 2) STREAM_DATA NORMAL
+            # ===========================================================
+            if msg_type != MessageType.STREAM_DATA.value:
+                print(f"[{self.node_id}] Unknown UDP msg_type: {msg_type}")
+                return
+
+            # NÃO SOU O DESTINO → encaminhar
+            if dest != self.node_ip:
+                next_hop = self.routing_table.get(dest)
+                if not next_hop:
+                    print(f"[{self.node_id}] No route to {dest}")
+                    return
+                print(f"[{self.node_id}] Forwarding STREAM_DATA to {dest} via {next_hop}")
+                self.send_udp_message(next_hop, data)
+                return
+
+            # SOU O DESTINO
+            print(f"[{self.node_id}] Received STREAM_DATA: {msg}")
+
         except Exception as e:
             print(f"[{self.node_id}] UDP error receiving: {e}")
+
+
 
     # ------------------------------------------------------------------
     #   HANDLERS DE TIPOS DE MENSAGEM
@@ -268,73 +314,25 @@ class Node:
     def handle_stream_end_message(self, msg, sender_ip):
         print(f"[{self.node_id}] Handling STREAM_END from {sender_ip}")
 
-    def handle_stream_data_message(self, msg, sender_ip):
-        filename = msg["data"]["filename"]
-
-        # Criar buffer se não existir
-        if not hasattr(self, "received_files"):
-            self.received_files = {}
-
-        if filename not in self.received_files:
-            self.received_files[filename] = {}
-
-        # Se for EOF → reconstruir e ignorar futuros chunks
-        if msg["data"].get("eof"):
-            total = msg["data"]["total_chunks"]
-            print(f"[{self.node_id}] EOF recebido para '{filename}'. Total: {total}. A reconstruir...")
-
-            with open(f"received_{filename}", "wb") as f:
-                for i in range(total):
-                    f.write(self.received_files[filename][i])
-
-            print(f"[{self.node_id}] Ficheiro reconstruído: received_{filename}")
-
-            # marcar como finalizado
-            if not hasattr(self, "finished_files"):
-                self.finished_files = set()
-            self.finished_files.add(filename)
-
-            return
-
-        # Se já estiver finalizado → ignorar chunk
-        if hasattr(self, "finished_files") and filename in self.finished_files:
-            return
-
-        # Guardar chunk com índice
-        index = msg["data"]["index"]
-        chunk = bytes.fromhex(msg["data"]["chunk"])
-        self.received_files[filename][index] = chunk
-        print(f"[{self.node_id}] Recebi chunk {index} de '{filename}'")
-
-        dest = msg["destip"]
-
-        # Se não é para mim → reenviar
-        if dest != self.node_ip:
-            next_hop = self.routing_table.get(dest)
-            if next_hop:
-                self.send_udp_message(next_hop, json.dumps(msg).encode())
-            return
-
-
-        def send_test_message(self, dest_ip, text="test"):
-            msg = {
-                "msg_type": MessageType.STREAM_DATA.value,
-                "msg_id": str(uuid.uuid4()),
-                "srcip": self.node_ip,
-                "destip": dest_ip,
-                "data": {
-                    "text": text
-                }
+    def send_test_message(self, dest_ip, text="test"):
+        msg = {
+            "msg_type": MessageType.STREAM_DATA.value,
+            "msg_id": str(uuid.uuid4()),
+            "srcip": self.node_ip,
+            "destip": dest_ip,
+            "data": {
+                "text": text
             }
+        }
 
-            # Descobrir próximo salto
-            next_hop = self.routing_table.get(dest_ip)
-            if not next_hop:
-                print(f"[{self.node_id}] No route to {dest_ip}")
-                return
+        # Descobrir próximo salto
+        next_hop = self.routing_table.get(dest_ip)
+        if not next_hop:
+            print(f"[{self.node_id}] No route to {dest_ip}")
+            return
 
-            print(f"[{self.node_id}] Sending TEST STREAM_DATA to {dest_ip} via {next_hop}")
-            self.send_udp_message(next_hop, json.dumps(msg).encode())
+        print(f"[{self.node_id}] Sending TEST STREAM_DATA to {dest_ip} via {next_hop}")
+        self.send_udp_message(next_hop, json.dumps(msg).encode())
 
 
     def start_flood(self):
@@ -349,7 +347,7 @@ class Node:
 
         print(f"[{self.node_id}] Starting FLOOD id={flood_id}")
 
-        # ⚠️ NÃO adicionar flood_id à flood_cache aqui!
+        # NÃO adicionar flood_id à flood_cache aqui!
 
         for neigh_ip in self.neighbors:
             msg_to_send = msg.copy()

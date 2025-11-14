@@ -1,34 +1,34 @@
-# control_client.py
 import sys
-import os
+import socket
 import uuid
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+class Client:
+    def __init__(self, node_id, node_ip, bootstrapper_ip, bootstrapper_port=5000):
+        self.node_id = node_id
+        self.node_ip = node_ip
+        self.bootstrapper_ip = bootstrapper_ip
+        self.bootstrapper_port = bootstrapper_port
 
-from Node.node import Node
-from Proto.aux_message import MessageType, create_message
+    def register(self):
+        msg = f"REGISTER {self.node_ip}"
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.connect((self.bootstrapper_ip, self.bootstrapper_port))
+                s.sendall(msg.encode())
+                response = s.recv(1024).decode()
+                print(f"[CLIENT {self.node_id}] Received from Bootstrapper: {response}")
+        except Exception as e:
+            print(f"[CLIENT {self.node_id}] Error registering: {e}")
 
 
-class Client(Node):
-    """Cliente que consome streams e participa no overlay."""
+if __name__ == "__main__":
+    if len(sys.argv) != 4:
+        print("Usage: python3 control_client.py NODE_ID NODE_IP BOOTSTRAPPER_IP")
+        sys.exit(1)
 
-    def __init__(self, node_id, node_ip, bootstrapper_ip,
-                 bootstrapper_port=1000, tcpport=6000, udpport=7000):
-        super().__init__(node_id, node_ip, bootstrapper_ip, bootstrapper_port,
-                         tcpport, udpport)
+    node_id = sys.argv[1]
+    node_ip = sys.argv[2]
+    bootstrap_ip = sys.argv[3]
 
-    # -------------------------------------------------------------
-    # PEDIR STREAM
-    # -------------------------------------------------------------
-    def request_stream(self, server_ip, stream_id="default"):
-        """Envia um pedido STREAM_START ao servidor."""
-        msg = create_message(
-            msg_id=str(uuid.uuid4()),
-            msg_type=MessageType.STREAM_START,
-            srcip=self.node_ip,
-            destip=server_ip,
-            data={"stream_id": stream_id, "requester_id": self.node_id}
-        )
-        self.send_tcp_message(server_ip, msg)
-        print(f"[{self.node_id}] Requested stream '{stream_id}' from {server_ip}")
-
+    client = Client(node_id, node_ip, bootstrap_ip)
+    client.register()

@@ -5,15 +5,42 @@ import socket
 import json
 import threading
 import time
+from enum import Enum
+import uuid
+
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from Proto.aux_message import MessageType, create_message, parse_message, get_message_type
+from Proto import control_proto_pb2 as control_proto
+
+class MessageType(Enum):
+    FLOOD = "FLOOD"
+    ALIVE = "ALIVE"
+    JOIN = "JOIN"
+    LEAVE = "LEAVE"
+    STREAM_START = "STREAM_START"
+    STREAM_END = "STREAM_END"
+    STREAM_DATA = "STREAM_DATA"
+
+
+def parse_message(raw):
+    """Converte bytes/string JSON -> dict Python."""
+    if isinstance(raw, bytes):
+        raw = raw.decode(errors="ignore")
+    try:
+        return json.loads(raw)
+    except Exception:
+        return None
+
+
+def get_message_type(msg: dict):
+    """Lê o campo msg_type da mensagem."""
+    return msg.get("msg_type")
 
 
 class Node:
     def __init__(self, node_id, node_ip, bootstrapper_ip,
-                 bootstrapper_port=1000, tcpport=6000, udpport=7000):
+                 bootstrapper_port=5000, tcpport=6000, udpport=7000):
         self.node_id = node_id
         self.node_ip = node_ip
         self.tcpport = tcpport          # Porta única para controlo (FLOOD, ALIVE, STREAM_START, etc.)
@@ -187,13 +214,21 @@ class Node:
 
         print(f"[{self.node_id}] Handling FLOOD from {sender_ip}, src={src_ip}, id={msg_id}")
 
+        # ---- flood_cache com (msg_id, src_ip) ----
+        key = (msg_id, src_ip)
+
         with self.lock:
-            if msg_id in self.flood_cache:
-                print(f"[{self.node_id}] FLOOD {msg_id} already seen, ignoring.")
+            if not hasattr(self, "flood_cache"):
+                self.flood_cache = set()
+
+            if key in self.flood_cache:
+                print(f"[{self.node_id}] FLOOD {key} already seen, ignoring.")
                 return
-            self.flood_cache.add(msg_id)
+
+            self.flood_cache.add(key)
+
             # Rota para a origem (src_ip) passa pelo sender_ip
-            if src_ip is not None:
+            if src_ip is not None and src_ip != self.node_ip:
                 self.routing_table[src_ip] = sender_ip
                 print(f"[{self.node_id}] Routing updated: {src_ip} -> {sender_ip}")
 
@@ -201,13 +236,17 @@ class Node:
         data["hop_count"] = hop_count + 1
         msg["data"] = data
 
+
         # Encaminhar para outros vizinhos (menos o sender)
         for neighbor_ip in self.neighbors:
             if neighbor_ip == sender_ip:
                 continue
+
             forward_msg = msg.copy()
             forward_msg["destip"] = neighbor_ip
             self.send_tcp_message(neighbor_ip, forward_msg)
+
+
 
     def handle_alive_message(self, msg, sender_ip):
         """Regista heartbeat do vizinho."""
@@ -230,5 +269,250 @@ class Node:
         print(f"[{self.node_id}] Handling STREAM_END from {sender_ip}")
 
     def handle_stream_data_message(self, msg, sender_ip):
-        print(f"[{self.node_id}] Handling STREAM_DATA from {sender_ip}")
-        # Aqui processas chunk de vídeo, etc.
+        filename = msg["data"]["filename"]
+
+        # Criar buffer se não existir
+        if not hasattr(self, "received_files"):
+            self.received_files = {}
+
+        if filename not in self.received_files:
+            self.received_files[filename] = {}
+
+        # Se for EOF → reconstruir e ignorar futuros chunks
+        if msg["data"].get("eof"):
+            total = msg["data"]["total_chunks"]
+            print(f"[{self.node_id}] EOF recebido para '{filename}'. Total: {total}. A reconstruir...")
+
+            with open(f"received_{filename}", "wb") as f:
+                for i in range(total):
+                    f.write(self.received_files[filename][i])
+
+            print(f"[{self.node_id}] Ficheiro reconstruído: received_{filename}")
+
+            # marcar como finalizado
+            if not hasattr(self, "finished_files"):
+                self.finished_files = set()
+            self.finished_files.add(filename)
+
+            return
+
+        # Se já estiver finalizado → ignorar chunk
+        if hasattr(self, "finished_files") and filename in self.finished_files:
+            return
+
+        # Guardar chunk com índice
+        index = msg["data"]["index"]
+        chunk = bytes.fromhex(msg["data"]["chunk"])
+        self.received_files[filename][index] = chunk
+        print(f"[{self.node_id}] Recebi chunk {index} de '{filename}'")
+
+        dest = msg["destip"]
+
+        # Se não é para mim → reenviar
+        if dest != self.node_ip:
+            next_hop = self.routing_table.get(dest)
+            if next_hop:
+                self.send_udp_message(next_hop, json.dumps(msg).encode())
+            return
+
+
+        def send_test_message(self, dest_ip, text="test"):
+            msg = {
+                "msg_type": MessageType.STREAM_DATA.value,
+                "msg_id": str(uuid.uuid4()),
+                "srcip": self.node_ip,
+                "destip": dest_ip,
+                "data": {
+                    "text": text
+                }
+            }
+
+            # Descobrir próximo salto
+            next_hop = self.routing_table.get(dest_ip)
+            if not next_hop:
+                print(f"[{self.node_id}] No route to {dest_ip}")
+                return
+
+            print(f"[{self.node_id}] Sending TEST STREAM_DATA to {dest_ip} via {next_hop}")
+            self.send_udp_message(next_hop, json.dumps(msg).encode())
+
+
+    def start_flood(self):
+        flood_id = str(uuid.uuid4())
+        msg = {
+            "msg_type": MessageType.FLOOD.value,
+            "msg_id": flood_id,
+            "srcip": self.node_ip,
+            "destip": None,
+            "data": {"hop_count": 0},
+        }
+
+        print(f"[{self.node_id}] Starting FLOOD id={flood_id}")
+
+        # ⚠️ NÃO adicionar flood_id à flood_cache aqui!
+
+        for neigh_ip in self.neighbors:
+            msg_to_send = msg.copy()
+            msg_to_send["destip"] = neigh_ip
+            self.send_tcp_message(neigh_ip, msg_to_send)
+
+
+        # ------------------------------------------------------------------
+    #   STREAMING (SINALIZAÇÃO)
+    # ------------------------------------------------------------------
+    def start_stream(self, dest_ip, stream_id="default"):
+        """Envia STREAM_START para um destino (podes depois usar routing_table)."""
+        msg = {
+            "msg_type": MessageType.STREAM_START.value,
+            "msg_id": str(uuid.uuid4()),
+            "srcip": self.node_ip,
+            "destip": dest_ip,
+            "data": {
+                "stream_id": stream_id,
+            },
+        }
+
+        # Por agora, envia diretamente para dest_ip (depois podemos usar uma routing_table)
+        self.send_tcp_message(dest_ip, msg)
+        print(f"[{self.node_id}] STREAM_START -> {dest_ip} (stream_id={stream_id})")
+
+    def stream_file(self, filename, dest_ip):
+        """Envia um ficheiro em chunks UDP multi-hop (com índice e EOF)."""
+
+        if not os.path.exists(filename):
+            print(f"[{self.node_id}] Ficheiro não encontrado: {filename}")
+            return
+
+        print(f"[{self.node_id}] A enviar ficheiro '{filename}' para {dest_ip}")
+
+        # STREAM_START primeiro
+        self.start_stream(dest_ip, stream_id=filename)
+
+        time.sleep(0.2)
+
+        try:
+            index = 0  # índice dos chunks
+
+            with open(filename, "rb") as f:
+                while True:
+                    chunk = f.read(1300)
+                    if not chunk:
+                        break
+
+                    msg = {
+                        "msg_type": MessageType.STREAM_DATA.value,
+                        "msg_id": str(uuid.uuid4()),
+                        "srcip": self.node_ip,
+                        "destip": dest_ip,
+                        "data": {
+                            "filename": filename,
+                            "chunk": chunk.hex(),
+                            "index": index
+                        }
+                    }
+
+                    next_hop = self.routing_table.get(dest_ip)
+                    if not next_hop:
+                        print(f"[{self.node_id}] Sem rota para {dest_ip}")
+                        return
+
+                    self.send_udp_message(next_hop, json.dumps(msg).encode())
+                    index += 1
+                    time.sleep(0.01)
+
+            # -------------------------------
+            # ENVIAR MENSAGEM FINAL (EOF)
+            # -------------------------------
+            msg_end = {
+                "msg_type": MessageType.STREAM_DATA.value,
+                "msg_id": str(uuid.uuid4()),
+                "srcip": self.node_id,
+                "destip": dest_ip,
+                "data": {
+                    "filename": filename,
+                    "eof": True,
+                    "total_chunks": index
+                }
+            }
+
+            next_hop = self.routing_table.get(dest_ip)
+            self.send_udp_message(next_hop, json.dumps(msg_end).encode())
+
+            print(f"[{self.node_id}] Ficheiro '{filename}' enviado com sucesso (EOF enviado).")
+
+        except Exception as e:
+            print(f"[{self.node_id}] Erro ao enviar ficheiro: {e}")
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 4:
+        print("Uso: python3 node.py NODE_ID NODE_IP BOOTSTRAPPER_IP")
+        sys.exit(1)
+
+    node_id = sys.argv[1]
+    node_ip = sys.argv[2]
+    bootstrap_ip = sys.argv[3]
+
+    # Cria nó e regista no bootstrapper
+    node = Node(
+        node_id=node_id,
+        node_ip=node_ip,
+        bootstrapper_ip=bootstrap_ip,
+        bootstrapper_port=5000,  # porta do teu bootstrapper
+        tcpport=6000,
+        udpport=7000,
+    )
+
+    # Inicia listeners TCP/UDP
+    node.join_overlay()
+
+    # Pequena pausa para ter a certeza que os listeners arrancam
+    time.sleep(0.5)
+
+    # Loop de comandos interativos
+    while True:
+        cmd = input(f"[{node_id}] Comando (flood/stream/routes/neigh/test/exit): ").strip().lower()
+
+        if cmd == "flood":
+            node.start_flood()
+
+        elif cmd.startswith("stream"):
+            parts = cmd.split()
+            
+            # Caso 1: stream <dest_ip>  → apenas STREAM_START
+            if len(parts) == 2:
+                dest = parts[1]
+                node.start_stream(dest)
+
+            # Caso 2: stream <ficheiro> <dest_ip>  → envia vídeo ou ficheiro
+            elif len(parts) == 3:
+                filename = parts[1]
+                dest = parts[2]
+                node.stream_file(filename, dest)
+
+            else:
+                print("Uso: stream <dest_ip>  ou  stream <ficheiro> <dest_ip>")
+
+
+
+        elif cmd == "routes":
+            print(f"[{node_id}] routing_table = {node.routing_table}")
+
+        elif cmd == "neigh":
+            print(f"[{node_id}] neighbors = {node.neighbors}")
+        
+        elif cmd.startswith("test"):
+            parts = cmd.split()
+            if len(parts) == 2:
+                dest = parts[1]
+                node.send_test_message(dest, text="HELLO FROM " + node.node_id)
+            else:
+                print("Uso: test <dest_ip>")
+        
+        elif cmd == "exit":
+            print(f"[{node_id}] Exiting...")
+            node.leave_overlay()
+            break
+
+        else:
+            print("Comandos: flood | stream <dest_ip> | routes | neigh | exit")

@@ -1,28 +1,33 @@
 import socket
 import threading
-from config import HOST, PORT, N_vizinho
-from overlay_nodes import node_overlay
+import json
+from config import HOST, PORT
+from overlay_nodes import node_overlay  # dicionário {node_ip: [lista_de_vizinhos]}
 
 
 def handle_client(client_socket):
-    request = client_socket.recv(1024).decode().strip()
-    print(f"[BOOT] Received: {request}")
+    try:
+        request = client_socket.recv(1024).decode().strip()
+        print(f"[BOOT] Received: {request}")
 
-    if request.startswith("REGISTER"):
-        node_ip = request.split()[-1]  # extrai o IP depois de REGISTER
+        if request.startswith("REGISTER"):
+            parts = request.split()
+            if len(parts) >= 2:
+                node_ip = parts[1]
+                neighbors = node_overlay.get(node_ip, [])
+                response_obj = {"neighbors": neighbors}
+            else:
+                response_obj = {"neighbors": []}
 
-        # Lógica de vizinhos
-        if node_ip in node_overlay:
-            neighbors = node_overlay[node_ip]
-            response = f"Neighbors: {neighbors}"
+            response = json.dumps(response_obj)
+            client_socket.sendall(response.encode())
         else:
-            response = "No neighbors assigned."
-
-        client_socket.send(response.encode())
-    else:
-        client_socket.send(b"ACK from Bootstrapper")
-
-    client_socket.close()
+            response = json.dumps({"status": "OK", "message": "ACK from Bootstrapper"})
+            client_socket.sendall(response.encode())
+    except Exception as e:
+        print(f"[BOOT] Error handling client: {e}")
+    finally:
+        client_socket.close()
 
 
 def bootstrapper_server(host, port):

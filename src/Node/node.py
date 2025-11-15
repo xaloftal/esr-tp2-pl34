@@ -133,7 +133,7 @@ class Node:
                         self.handle_stream_end_message(msg.get('data'), addr[0])
                     case _:
                         print(f"[{self.node_id}] Unknown message type: {msg_type}")    
-           else:
+            else:
                 print(f"[{self.node_id}] Empty TCP message from {addr}")          
 
         except Exception as e:

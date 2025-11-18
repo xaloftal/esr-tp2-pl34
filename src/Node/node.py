@@ -17,6 +17,7 @@ class MessageType(Enum):
     """Tipos de mensagens de controlo (TCP)"""
     FLOOD = "FLOOD"          # Para Etapa 2 (Construção de Rotas)
     ALIVE = "ALIVE"          # Para Etapa 1 (Manutenção)
+    LEAVE = "LEAVE"          # Nó a sair da rede
 
 
 class Node:
@@ -28,6 +29,8 @@ class Node:
     def __init__(self, node_id, node_ip, is_server=False):
         self.node_id = node_id
         self.node_ip = node_ip
+        self.leave_cache = set()
+
         
         # --- Flag de Servidor ---
         self.is_server = is_server 
@@ -76,6 +79,11 @@ class Node:
         elif msg_type == MessageType.ALIVE.value:
             # ETAPA 1: Processar mensagem de manutenção
             print(f"[{self.node_id}] Recebido ALIVE de {sender_ip}")
+
+        elif msg_type == MessageType.LEAVE.value:
+            self.handle_leave_message(msg, sender_ip)
+
+
         
         else:
             print(f"[{self.node_id}] Mensagem desconhecida de {sender_ip}: {msg_type}")
@@ -122,6 +130,52 @@ class Node:
                 continue
                 
             send_tcp_message(neighbor_ip, msg)
+    
+    def announce_leave(self):
+        """
+        Anuncia aos vizinhos que este nó vai sair da rede.
+        """
+        msg = {
+            "msg_type": MessageType.LEAVE.value,
+            "node_ip": self.node_ip
+        }
+
+        print(f"[{self.node_id}] A anunciar LEAVE...")
+
+        for neigh_ip in self.neighbors:
+            send_tcp_message(neigh_ip, msg)
+
+    def handle_leave_message(self, msg, sender_ip):
+        dead_ip = msg.get("node_ip")
+
+        # ----------- EVITAR enviar msg de leave DUPLICADOS -----------
+        if dead_ip in self.leave_cache:
+            return
+        self.leave_cache.add(dead_ip)
+        # -----------------------------------------
+
+        print(f"[{self.node_id}] Recebido LEAVE: {dead_ip} está a sair da rede.")
+
+        with self.lock:
+            if dead_ip in self.neighbors:
+                self.neighbors.remove(dead_ip)
+            if dead_ip in self.routing_table:
+                del self.routing_table[dead_ip]
+
+            to_delete = []
+            for dest, (next_hop, metric) in self.routing_table.items():
+                if next_hop == dead_ip:
+                    to_delete.append(dest)
+            for dest in to_delete:
+                del self.routing_table[dest]
+
+        # Propagar a mensagem só uma vez
+        for neigh_ip in self.neighbors:
+            if neigh_ip != sender_ip:
+                send_tcp_message(neigh_ip, msg)
+
+
+
 
     def start_flood(self):
         """Inicia um FLOOD para se dar a conhecer (Etapa 2)."""
@@ -172,7 +226,7 @@ if __name__ == "__main__":
     if node.is_server:
         prompt_text = f"[{node.node_id}] (Servidor) Comando (flood / routes / neigh / exit): "
     else:
-        prompt_text = f"[{node.node_id}] (Cliente)  Comando (routes / neigh / exit): "
+        prompt_text = f"[{node.node_id}] (Cliente)  Comando (routes / neigh / leave / exit): "
 
     while True:
         try:
@@ -194,15 +248,18 @@ if __name__ == "__main__":
             elif cmd == "exit":
                 print(f"[{node.node_id}] A sair...")
                 break
-            
+            elif cmd == "leave":
+                node.announce_leave()
+                print(f"[{node.node_id}] LEAVE enviado. A terminar...")
+                break
             elif cmd == "":
                 pass
 
             else:
                 if node.is_server:
-                    print("Comandos: flood | routes | neigh | exit")
+                    print("Comandos: flood | routes | neigh |exit")
                 else:
-                    print("Comandos: routes | neigh | exit")
+                    print("Comandos: routes | neigh | leave | exit")
         
         except KeyboardInterrupt:
             print(f"\n[{node.node_id}] A sair...")

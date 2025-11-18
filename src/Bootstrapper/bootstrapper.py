@@ -1,21 +1,28 @@
+# Ficheiro: src/Bootstrapper/bootstrapper.py
 import socket
 import threading
 import json
 from config import HOST, PORT
-from overlay_nodes import node_overlay  # dicionário {node_ip: [lista_de_vizinhos]}
-
+from overlay_nodes import node_overlay  # Importa o mapa
 
 def handle_client(client_socket):
     try:
         request = client_socket.recv(1024).decode().strip()
         print(f"[BOOT] Received: {request}")
+        print(f"[BOOT] Bootstrapper HOST is: {HOST}")
 
         if request.startswith("REGISTER"):
             parts = request.split()
+            print(f"[BOOT] Parts received: {parts}")
+            
             if len(parts) >= 2:
-                node_ip = parts[1]
+                node_ip = parts[1] 
+                print(f"[BOOT] IP a procurar: {node_ip}")
+                
                 neighbors = node_overlay.get(node_ip, [])
                 response_obj = {"neighbors": neighbors}
+                
+                print(f"[BOOT] Resposta: {response_obj}")
             else:
                 response_obj = {"neighbors": []}
 
@@ -28,7 +35,6 @@ def handle_client(client_socket):
         print(f"[BOOT] Error handling client: {e}")
     finally:
         client_socket.close()
-
 
 def bootstrapper_server(host, port):
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -47,7 +53,6 @@ def bootstrapper_server(host, port):
         print("\n[BOOT] Shutting down server...")
     finally:
         server.close()
-
 
 if __name__ == "__main__":
     bootstrapper_server(HOST, PORT)

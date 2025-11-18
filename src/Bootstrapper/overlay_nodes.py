@@ -1,20 +1,18 @@
+# Ficheiro: src/Bootstrapper/overlay_nodes.py
+
+# Dicionário que mapeia o IP de um nó à lista de IPs dos seus vizinhos
+# Esta é a topologia "manual" lida pelo bootstrapper.
+
 node_overlay = {
-    # STREAMER conhece apenas C2
-    "10.0.3.20": ["10.0.0.21"],
+    # STREAMER (10.0.0.20) conhece apenas C2
+    "10.0.0.20": ["10.0.0.21"],
 
-    # C2 conhece STREAMER e C1
-    "10.0.0.21": ["10.0.3.20", "10.0.0.20"],
+    # C2 (10.0.0.21) conhece STREAMER (20) e C1 (1.2)
+    "10.0.0.21": ["10.0.0.20", "10.0.1.2"],
 
-    # C1 conhece C2 e C5
-    "10.0.0.20": ["10.0.0.21", "10.0.2.20"],
+    # C1 (10.0.1.2) conhece C2 (21) e C5 (2.20)
+    "10.0.1.2": ["10.0.0.21", "10.0.2.20"],
 
-    # C5 conhece apenas C1
-    "10.0.2.20": ["10.0.0.20"],
+    # C5 (10.0.2.20) conhece apenas C1 (1.2)
+    "10.0.2.20": ["10.0.1.2"],
 }
-
-
-
-
-HOST = "10.0.4.20"
-PORT = 5000
-N_vizinho = 3

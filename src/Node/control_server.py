@@ -1,131 +1,74 @@
+# Ficheiro: src/Node/control_server.py
 import socket
-import sys
+import threading
 import json
-import uuid
-import time
+from config import NODE_TCP_PORT
 
+def parse_message(raw):
+    """Converte bytes/string JSON -> dict Python."""
+    if isinstance(raw, bytes):
+        raw = raw.decode(errors="ignore")
+    try:
+        return json.loads(raw)
+    except Exception:
+        return None
 
 class ControlServer:
+    """
+    Lado "servidor" do nó P2P: escuta por conexões TCP de controlo.
+    """
+    
+    def __init__(self, host_ip, handler_callback):
+        """
+        :param host_ip: O IP local onde este nó deve escutar.
+        :param handler_callback: A função (no 'node.py') a chamar 
+                                 quando uma mensagem chega.
+        """
+        self.host_ip = host_ip
+        self.port = NODE_TCP_PORT
+        self.handler_callback = handler_callback
+        self.server_socket = None
+        print(f"[Servidor] A preparar listener em {self.host_ip}:{self.port}")
 
-    def __init__(self, node_id, node_ip, bootstrap_ip, bootstrap_port=5000, tcp_port=6000):
-        self.node_id = node_id
-        self.node_ip = node_ip
-        self.bootstrap_ip = bootstrap_ip
-        self.bootstrap_port = bootstrap_port
-        self.tcp_port = tcp_port
+    def start(self):
+        """Inicia o listener do servidor numa thread separada."""
+        threading.Thread(target=self._run_server, daemon=True).start()
 
-        # Dicionário de vizinhos
-        self.neighbors = {}   # {ip: last_seen_timestamp}
-
-    # ============================================================
-    # REGISTER NO BOOTSTRAPPER
-    # ============================================================
-    def register_node(self):
-        msg = f"REGISTER {self.node_ip}"
-
+    def _run_server(self):
+        """Loop principal do servidor (corre na thread)."""
         try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.connect((self.bootstrap_ip, self.bootstrap_port))
-                s.sendall(msg.encode())
+            self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.server_socket.bind((self.host_ip, self.port))
+            self.server_socket.listen()
+            print(f"[Servidor] A escutar em {self.host_ip}:{self.port}")
 
-                response = s.recv(1024).decode()
-                data = json.loads(response)
+            while True:
+                conn, addr = self.server_socket.accept()
+                threading.Thread(target=self._handle_connection, args=(conn, addr), daemon=True).start()
+        
+        except Exception as e:
+            print(f"[Servidor] Erro fatal no servidor: {e}")
+            if self.server_socket:
+                self.server_socket.close()
 
-                print(f"[SERVER {self.node_id}] Registered at bootstrapper. Neighbors: {data['neighbors']}")
+    def _handle_connection(self, conn, addr):
+        """Lida com uma única conexão TCP de um vizinho."""
+        sender_ip = addr[0]
+        try:
+            raw_data = conn.recv(65535) # Recebe a mensagem completa
+            if not raw_data:
+                return
 
-                now = time.time()
-                for n in data["neighbors"]:
-                    self.neighbors[n] = now
+            msg = parse_message(raw_data)
+            if not msg:
+                print(f"[Servidor] Mensagem JSON inválida de {sender_ip}")
+                return
+            
+            # Entrega a mensagem ao "cérebro" (node.py)
+            self.handler_callback(msg, sender_ip)
 
         except Exception as e:
-            print(f"[SERVER {self.node_id}] Error registering: {e}")
-
-    # ============================================================
-    # FLOOD
-    # ============================================================
-    def initiate_flood(self):
-        flood_id = str(uuid.uuid4())
-
-        print(f"[SERVER {self.node_id}] Initiating flood ID={flood_id}")
-
-        msg = {
-            "type": "FLOOD",
-            "id": flood_id,
-            "src": self.node_id
-        }
-
-        for neighbor_ip in self.neighbors:
-            try:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    s.connect((neighbor_ip, self.tcp_port))
-                    s.sendall(json.dumps(msg).encode())
-
-                print(f"[SERVER {self.node_id}] Flood sent to {neighbor_ip}")
-
-            except Exception as e:
-                print(f"[SERVER {self.node_id}] Error sending flood to {neighbor_ip}: {e}")
-
-    # ============================================================
-    # STREAM
-    # ============================================================
-    def start_stream(self, dest_ip, stream_id="default"):
-        msg = {
-            "type": "STREAM_START",
-            "stream_id": stream_id,
-            "src": self.node_id
-        }
-
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.connect((dest_ip, self.tcp_port))
-                s.sendall(json.dumps(msg).encode())
-
-            print(f"[SERVER {self.node_id}] STREAM_START sent to {dest_ip}")
-
-        except Exception as e:
-            print(f"[SERVER {self.node_id}] Error starting stream: {e}")
-
-    # ============================================================
-    # MAIN COMMAND LOOP
-    # ============================================================
-    def run(self):
-        print(f"[SERVER {self.node_id}] Ready.")
-
-        while True:
-            cmd = input(f"[SERVER {self.node_id}] Enter command (flood/stream/exit): ").strip().lower()
-
-            if cmd == "flood":
-                self.initiate_flood()
-
-            elif cmd.startswith("stream"):
-                parts = cmd.split()
-                if len(parts) >= 2:
-                    dest_ip = parts[1]
-                    self.start_stream(dest_ip)
-                else:
-                    print("Usage: stream <dest_ip>")
-
-            elif cmd == "exit":
-                print(f"[SERVER {self.node_id}] Exiting server…")
-                break
-
-            else:
-                print("Commands: flood | stream <dest_ip> | exit")
-
-
-# ============================================================
-# MAIN
-# ============================================================
-if __name__ == "__main__":
-    if len(sys.argv) != 4:
-        print("Usage: python3 control_server.py NODE_ID NODE_IP BOOTSTRAPPER_IP")
-        sys.exit(1)
-
-    node_id = sys.argv[1]
-    node_ip = sys.argv[2]
-    bootstrap_ip = sys.argv[3]
-
-    server = ControlServer(node_id, node_ip, bootstrap_ip)
-
-    server.register_node()
-    server.run()
+            print(f"[Servidor] Erro a ler dados de {sender_ip}: {e}")
+        finally:
+            conn.close()

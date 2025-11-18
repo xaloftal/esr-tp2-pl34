@@ -30,7 +30,7 @@ def create_message(msg_id = uuid.uuid4(), msg_type, srcip, destip, data=None):
         "type": msg_type,
         "srcip" : srcip,
         "destip": destip,
-        "payload": data or {}
+        "payload": data if data is not None else {}
     }
 
 

@@ -29,6 +29,8 @@ class Node:
     def __init__(self, node_id, node_ip, is_server=False):
         self.node_id = node_id
         self.node_ip = node_ip
+        self.last_alive = {}     # dicionário: {ip : timestamp}
+        self.fail_count = {}     # dicionário: {ip : nº de falhas}
         self.leave_cache = set()
         self.flood_cache = set()
         self.network_ready = False
@@ -85,6 +87,7 @@ class Node:
                 "src": self.node_ip
             }
             send_tcp_message(sender_ip, reply)
+            
 
         # --- ESTOU_AQUI recebido: atualizar estado do vizinho ---
         elif msg_type == "ESTOU_AQUI":
@@ -212,26 +215,36 @@ class Node:
         while not self.network_ready:
             time.sleep(1)
 
-        time.sleep(1)  # estabilização
-
-        HEARTBEAT_INTERVAL = 10
+        HEARTBEAT_INTERVAL = 5      # de quanto em quanto tempo enviamos ALIVE
+        FAIL_TIMEOUT = 15           # se 15 segundos sem ESTOU_AQUI → suspeito
+        MAX_FAILS = 3              # falha repetida 3 vezes → morto
 
         while True:
             time.sleep(HEARTBEAT_INTERVAL)
+            now = time.time()
 
             for neigh in list(self.neighbors):
 
-                # se o vizinho enviou LEAVE → remover imediatamente
-                if neigh in self.leave_cache:
-                    print(f"[{self.node_id}] O vizinho {neigh} saiu da rota.")
-                    self.local_leave_cleanup(neigh)
-                    continue
+                # enviar ALIVE silencioso
+                send_tcp_message(neigh, { "msg_type": "ALIVE", "src": self.node_ip })
 
-                # enviar ALIVE silenciosamente
-                send_tcp_message(neigh, {
-                    "msg_type": "ALIVE",
-                    "src": self.node_ip
-                })
+                # primeira vez — criar timestamp inicial
+                if neigh not in self.last_alive:
+                    self.last_alive[neigh] = now
+
+                # se passou muito tempo sem resposta → aumentar falhas
+                if now - self.last_alive[neigh] > FAIL_TIMEOUT:
+                    self.fail_count[neigh] = self.fail_count.get(neigh, 0) + 1
+                else:
+                    self.fail_count[neigh] = 0
+
+                # se falhou várias vezes → morto
+                if self.fail_count[neigh] >= MAX_FAILS:
+                    print(f"[{self.node_id}] Vizinho {neigh} desapareceu.")
+                    self.local_leave_cleanup(neigh)
+                    self.last_alive.pop(neigh, None)
+                    self.fail_count.pop(neigh, None)
+
 
                     
 

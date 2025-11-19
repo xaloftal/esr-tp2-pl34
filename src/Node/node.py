@@ -31,8 +31,6 @@ class Node:
         self.node_ip = node_ip
         self.leave_cache = set()
         self.flood_cache = set()
-        self.last_alive = {}  # {neighbor: timestamp ultima resposta}
-        self.fail_count = {}
         self.network_ready = False
 
         # --- Flag de Servidor ---
@@ -70,50 +68,31 @@ class Node:
         print(f"[{self.node_id}] Nó iniciado. Vizinhos: {self.neighbors}")
 
     def handle_incoming_message(self, msg, sender_ip):
-        """
-        Callback. O ControlServer chama esta função quando
-        recebe uma mensagem completa.
-        """
+        """Processa mensagens recebidas do TCP."""
         if not self.network_ready:
             self.network_ready = True
 
-        msg_type = msg.get("msg_type", "").strip() if msg else ""
+        msg_type = msg.get("msg_type", "")
 
-        if not msg_type:
-            return  # ignora mensagens vazias
-
-        # FLOOD
+        # --- FLOOD ---
         if msg_type == MessageType.FLOOD.value:
             self.handle_flood_message(msg, sender_ip)
 
-        # ALIVE (ping recebido → enviar resposta)
+        # --- ALIVE recebido: responder silenciosamente ---
         elif msg_type == MessageType.ALIVE.value:
-            print(f"[{self.node_id}] Recebido ALIVE de {sender_ip}")
-
-            # Responde com ALIVE_REPLY
             reply = {
-                "msg_type": "ALIVE_REPLY",
+                "msg_type": "ESTOU_AQUI",
                 "src": self.node_ip
             }
             send_tcp_message(sender_ip, reply)
 
-        # ALIVE_REPLY (pong recebido → recomeça contador)
-        elif msg_type == "ALIVE_REPLY":
-            print(f"[{self.node_id}] Recebido ALIVE_REPLY de {sender_ip}")
+        # --- ESTOU_AQUI recebido: atualizar estado do vizinho ---
+        elif msg_type == "ESTOU_AQUI":
+            print(f"[{self.node_id}] {sender_ip} está vivo")
 
-            # Atualizar timestamp da última resposta
-            self.last_alive[sender_ip] = time.time()
-
-            # Falhas voltam a 0
-            self.fail_count[sender_ip] = 0
-
-        # LEAVE
+        # --- LEAVE ---
         elif msg_type == MessageType.LEAVE.value:
             self.handle_leave_message(msg, sender_ip)
-
-        # Desconhecido
-        else:
-            print(f"[{self.node_id}] Mensagem desconhecida de {sender_ip}: {msg_type}")
 
     # ------------------------------------------------------------------
     # ETAPA 2: LÓGICA DE CONSTRUÇÃO DE ROTAS (Flooding)
@@ -162,9 +141,6 @@ class Node:
 
     
     def announce_leave(self):
-        """
-        Anuncia aos vizinhos que este nó vai sair da rede.
-        """
         msg = {
             "msg_type": MessageType.LEAVE.value,
             "node_ip": self.node_ip
@@ -175,34 +151,40 @@ class Node:
         for neigh_ip in self.neighbors:
             send_tcp_message(neigh_ip, msg)
 
+        # garantir que a mensagem sai antes do processo morrer
+        time.sleep(0.2)
+
+
     def handle_leave_message(self, msg, sender_ip):
         dead_ip = msg.get("node_ip")
 
-        # ----------- EVITAR enviar msg de leave DUPLICADOS -----------
+        # evitar duplicados
         if dead_ip in self.leave_cache:
             return
         self.leave_cache.add(dead_ip)
-        # -----------------------------------------
 
-        print(f"[{self.node_id}] Recebido LEAVE: {dead_ip} está a sair da rede.")
+        print(f"[{self.node_id}] O vizinho {dead_ip} saiu da rota.")
 
         with self.lock:
+            # remover do conjunto de vizinhos
             if dead_ip in self.neighbors:
                 self.neighbors.remove(dead_ip)
+
+            # remover rotas diretas
             if dead_ip in self.routing_table:
                 del self.routing_table[dead_ip]
 
+            # remover rotas onde era next hop
             to_delete = []
-            for dest, (next_hop, metric) in self.routing_table.items():
+            for dest, (next_hop, _) in self.routing_table.items():
                 if next_hop == dead_ip:
                     to_delete.append(dest)
+
             for dest in to_delete:
                 del self.routing_table[dest]
 
-        # Propagar a mensagem só uma vez
-        for neigh_ip in self.neighbors:
-            if neigh_ip != sender_ip:
-                send_tcp_message(neigh_ip, msg)
+        # NÃO PROPAGAR LEAVE aos outros vizinhos
+
 
     def local_leave_cleanup(self, dead_ip):
         """
@@ -227,46 +209,31 @@ class Node:
 
 
     def maintenance_loop(self):
-        # Espera até o servidor estar pronto
         while not self.network_ready:
             time.sleep(1)
 
-        HEARTBEAT_INTERVAL = 5      # enviar ALIVE a cada 3s
-        FAIL_TIMEOUT = 10            # 8s sem ALIVE_REPLY = 1 falha
-        MAX_FAILS = 2               # depois de 2 falhas → morto
+        time.sleep(1)  # estabilização
+
+        HEARTBEAT_INTERVAL = 10
 
         while True:
             time.sleep(HEARTBEAT_INTERVAL)
-            now = time.time()
 
             for neigh in list(self.neighbors):
 
-                # Envia ALIVE
-                msg = { "msg_type": "ALIVE", "src": self.node_ip }
-                send_tcp_message(neigh, msg)
-
-                # Se nunca recebemos reply, inicializa timestamp
-                if neigh not in self.last_alive:
-                    self.last_alive[neigh] = now
-
-                # Verifica se passou demasiado tempo desde o último reply
-                if now - self.last_alive[neigh] > FAIL_TIMEOUT:
-                    self.fail_count[neigh] = self.fail_count.get(neigh, 0) + 1
-                else:
-                    self.fail_count[neigh] = 0
-
-                # Se falhar N ciclos → considerar morto
-                if self.fail_count[neigh] >= MAX_FAILS:
-                    print(f"[{self.node_id}] Vizinho {neigh} não responde. Considerado MORTO.")
-
+                # se o vizinho enviou LEAVE → remover imediatamente
+                if neigh in self.leave_cache:
+                    print(f"[{self.node_id}] O vizinho {neigh} saiu da rota.")
                     self.local_leave_cleanup(neigh)
+                    continue
 
-                    # limpar estado
-                    self.fail_count.pop(neigh, None)
-                    self.last_alive.pop(neigh, None)
+                # enviar ALIVE silenciosamente
+                send_tcp_message(neigh, {
+                    "msg_type": "ALIVE",
+                    "src": self.node_ip
+                })
 
-
-
+                    
 
     def start_flood(self):
         """Inicia um FLOOD para se dar a conhecer (Etapa 2)."""

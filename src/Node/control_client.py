@@ -51,6 +51,6 @@ def send_tcp_message(dest_ip, msg_dict):
             sock.sendall(payload)
         return True
 
-    except Exception as e:
-        print(f"[Cliente] Erro a enviar TCP para {dest_ip}:{NODE_TCP_PORT}: {e}")
-        return False
+    except: #Exception as e:
+        # print(f"[Cliente] Erro a enviar TCP para {dest_ip}:{NODE_TCP_PORT}: {e}")
+        return #False

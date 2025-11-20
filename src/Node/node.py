@@ -5,19 +5,14 @@ import threading
 import time
 import uuid
 from enum import Enum
+import json
+import socket
 
-# Importa as nossas lógicas de "cliente" e "servidor"
-from control_client import register_with_bootstrapper, send_tcp_message
 from control_server import ControlServer
 # Importa a porta TCP partilhada
-from config import NODE_TCP_PORT
-
-
-class MessageType(Enum):
-    """Tipos de mensagens de controlo (TCP)"""
-    FLOOD = "FLOOD"          # Para Etapa 2 (Construção de Rotas)
-    ALIVE = "ALIVE"          # Para Etapa 1 (Manutenção)
-    LEAVE = "LEAVE"          # Nó a sair da rede
+from config import NODE_TCP_PORT, BOOTSTRAPPER_PORT, NODE_UDP_PORT
+# Import Message class
+from aux_files.aux_message import Message, MsgType, create_flood_message, create_alive_message, create_leave_message, create_register_message
 
 
 class Node:
@@ -26,7 +21,7 @@ class Node:
     define a lógica de processamento de mensagens.
     """
     
-    def __init__(self, node_id, node_ip, is_server=False):
+    def __init__(self, node_id, node_ip, bootstrapper_ip,  is_server=False):
         self.node_id = node_id
         self.node_ip = node_ip
         self.last_alive = {}     # dicionário: {ip : timestamp}
@@ -34,13 +29,14 @@ class Node:
         self.leave_cache = set()
         self.flood_cache = set()
         self.network_ready = False
+        self.bootstrapper_ip = bootstrapper_ip
 
         # --- Flag de Servidor ---
         self.is_server = is_server 
         print(f"[{self.node_id}] Tipo: {'Servidor de Stream' if self.is_server else 'Cliente/Nó Intermédio'}")
         
         # --- Estado da Etapa 1: Topologia Overlay ---
-        self.neighbors = [] # Lista de IPs vizinhos
+        self.neighbors = self.register_with_bootstrapper(self.node_ip)
         # O "servidor" P2P que escuta por mensagens
         self.server = ControlServer(self.node_ip, self.handle_incoming_message)
         
@@ -51,16 +47,12 @@ class Node:
         self.flood_cache = set() # Evita loops de flood
         
         self.lock = threading.Lock() 
+        
+        
+        
 
     def start(self):
-        """Inicia todos os serviços do nó."""
-        
-        # ETAPA 1: Registar e obter vizinhos
-        print(f"[{self.node_id}] A registar-se no bootstrapper...")
-        self.neighbors = register_with_bootstrapper(self.node_ip)
-        
-        if not self.neighbors and not self.is_server:
-             print(f"[{self.node_id}] Aviso: Não foram obtidos vizinhos.")
+        """Inicia todos os serviços do nó."""   
 
         # ETAPA 1: Iniciar o "servidor" para escutar vizinhos
         self.server.start()
@@ -68,34 +60,93 @@ class Node:
         t.start()
         
         print(f"[{self.node_id}] Nó iniciado. Vizinhos: {self.neighbors}")
+        
+        
+        
+        
+    def register_with_bootstrapper(self, node_ip):
+        """
+        ETAPA 1: Regista o nó no bootstrapper e obtém a lista de vizinhos.
+        """
+        print(f"[Cliente] A tentar registar com o IP: {node_ip}")
+        try:
+            client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            client.settimeout(5.0)
+            client.connect((self.bootstrapper_ip, BOOTSTRAPPER_PORT))
+            print(f"[Cliente] Ligado ao Bootstrapper em {self.bootstrapper_ip}:{BOOTSTRAPPER_PORT}")
+
+            # Envia a mensagem de registo
+            message = create_register_message(node_ip, self.bootstrapper_ip)
+            client.sendall(message.to_bytes())
+
+            # Recebe a resposta (JSON com a lista de vizinhos)
+            response_raw = client.recv(4096).decode()
+            client.close()
+
+            data = Message.from_json(response_raw)
+            neighbors = data.get_payload().get("neighbours", [])
+            
+            print(f"[Cliente] Vizinhos recebidos do bootstrapper: {neighbors}")
+            return neighbors
+        
+        except json.JSONDecodeError:
+            print(f"[Cliente] Falha a parsear resposta do bootstrapper: {response_raw}")
+            return []
+        except Exception as e:
+            print(f"[Cliente] Erro a ligar/registar no bootstrapper: {e}")
+            return []
+
+
+
+
+    def send_tcp_message(self, dest_ip, msg_dict):
+        """
+        Envia uma mensagem de controlo (dicionário Python) para um nó vizinho.
+        """
+        try:
+            msg = Message.from_dict(msg_dict).to_bytes()
+            
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.settimeout(2.0) # Timeout curto para não bloquear
+                
+                # Cada nó escuta na mesma porta de controlo
+                sock.connect((dest_ip, NODE_TCP_PORT)) 
+                sock.sendall(msg)
+            return True
+
+        except: #Exception as e:
+            # print(f"[Cliente] Erro a enviar TCP para {dest_ip}:{NODE_TCP_PORT}: {e}")
+            return #False
+        
+        
 
     def handle_incoming_message(self, msg, sender_ip):
         """Processa mensagens recebidas do TCP."""
         if not self.network_ready:
             self.network_ready = True
 
-        msg_type = msg.get("msg_type", "")
+        msg_type = Message.get_message_type(msg)
 
         # --- FLOOD ---
-        if msg_type == MessageType.FLOOD.value:
+        if msg_type == MsgType.FLOOD:
             self.handle_flood_message(msg, sender_ip)
 
         # --- ALIVE recebido: responder silenciosamente ---
-        elif msg_type == MessageType.ALIVE.value:
-            reply = {
-                "msg_type": "ESTOU_AQUI",
-                "src": self.node_ip
-            }
-            send_tcp_message(sender_ip, reply)
+        elif msg_type == MsgType.ALIVE:           
+            reply = create_alive_message(self.node_ip, sender_ip)
+            self.send_tcp_message(sender_ip, reply)
             
-
         # --- ESTOU_AQUI recebido: atualizar estado do vizinho ---
-        elif msg_type == "ESTOU_AQUI":
+        elif msg_type == MsgType.ALIVE_ACK:
             print(f"[{self.node_id}] {sender_ip} está vivo")
 
         # --- LEAVE ---
-        elif msg_type == MessageType.LEAVE.value:
+        elif msg_type == MsgType.LEAVE:
             self.handle_leave_message(msg, sender_ip)
+            
+            
+            
+            
 
     # ------------------------------------------------------------------
     # ETAPA 2: LÓGICA DE CONSTRUÇÃO DE ROTAS (Flooding)
@@ -139,11 +190,17 @@ class Node:
         # 5 — Reenviar FLOOD apenas para outros vizinhos
         for neigh in self.neighbors:
             if neigh != sender_ip:
-                send_tcp_message(neigh, new_msg)
+                self.send_tcp_message(neigh, new_msg)
+                
+                
+                
 
 
     
     def announce_leave(self):
+        """
+        Anuncia aos vizinhos que vai sair
+        """
         msg = {
             "msg_type": MessageType.LEAVE.value,
             "node_ip": self.node_ip
@@ -152,13 +209,16 @@ class Node:
         print(f"[{self.node_id}] A anunciar LEAVE...")
 
         for neigh_ip in self.neighbors:
-            send_tcp_message(neigh_ip, msg)
+            self.send_tcp_message(neigh_ip, msg)
 
         # garantir que a mensagem sai antes do processo morrer
         time.sleep(0.2)
 
 
     def handle_leave_message(self, msg, sender_ip):
+        """
+        processa mensagem LEAVE recebida
+        """
         dead_ip = msg.get("node_ip")
 
         # evitar duplicados
@@ -191,8 +251,7 @@ class Node:
 
     def local_leave_cleanup(self, dead_ip):
         """
-        Remove um vizinho morto sem tratar como LEAVE recebido.
-        (Não mostra mensagem LEAVE e não propaga nada.)
+        Remove um vizinho morto
         """
         with self.lock:
             if dead_ip in self.neighbors:
@@ -211,12 +270,25 @@ class Node:
                 del self.routing_table[dest]
 
 
+    def start_flood(self):
+        """
+        Inicia um flood pela rede (apenas servidor).
+        """
+        msg_id = str(uuid.uuid4())
+        flood_msg = create_flood_message(self.node_ip, "broadcast", msg_id, hop_count=0)
+        
+        print(f"[{self.node_id}] A iniciar FLOOD com ID {msg_id}")
+        
+        # Enviar para todos os vizinhos
+        for neigh in self.neighbors:
+            self.send_tcp_message(neigh, flood_msg)
+    
     def maintenance_loop(self):
         while not self.network_ready:
             time.sleep(1)
 
         HEARTBEAT_INTERVAL = 5      # de quanto em quanto tempo enviamos ALIVE
-        FAIL_TIMEOUT = 15           # se 15 segundos sem ESTOU_AQUI → suspeito
+        FAIL_TIMEOUT = 10           # se 10 segundos sem ESTOU_AQUI → suspeito
         MAX_FAILS = 3              # falha repetida 3 vezes → morto
 
         while True:
@@ -226,7 +298,7 @@ class Node:
             for neigh in list(self.neighbors):
 
                 # enviar ALIVE silencioso
-                send_tcp_message(neigh, { "msg_type": "ALIVE", "src": self.node_ip })
+                self.send_tcp_message(neigh, { "msg_type": "ALIVE", "src": self.node_ip })
 
                 # primeira vez — criar timestamp inicial
                 if neigh not in self.last_alive:
@@ -248,25 +320,7 @@ class Node:
 
                     
 
-    def start_flood(self):
-        """Inicia um FLOOD para se dar a conhecer (Etapa 2)."""
-        flood_id = str(uuid.uuid4())
-        msg = {
-            "msg_type": MessageType.FLOOD.value,
-            "msg_id": flood_id,
-            "srcip": self.node_ip, # Eu sou a origem
-            "data": {"hop_count": 0}, # Métrica inicial
-            # latencia
-        }
 
-        print(f"[{self.node_id}] A iniciar FLOOD (Etapa 2) id={flood_id}...")
-        
-        with self.lock:
-            self.flood_cache.add((self.node_ip, flood_id))
-
-        # Enviar para todos os vizinhos diretos
-        for neigh_ip in self.neighbors:
-            send_tcp_message(neigh_ip, msg)
 
 # ------------------------------------------------------------------
 # MAIN (Ponto de Entrada)
@@ -282,11 +336,12 @@ if __name__ == "__main__":
 
     node_id = sys.argv[1]
     node_ip = sys.argv[2]
+    boot_ip = sys.argv[3]
 
     
     is_server_flag = "--server" in sys.argv
     
-    node = Node(node_id, node_ip, is_server=is_server_flag)
+    node = Node(node_id, node_ip, boot_ip, is_server=is_server_flag)
 
     # 2. Iniciar serviços (Etapa 1: Registar e Escutar)
     node.start()

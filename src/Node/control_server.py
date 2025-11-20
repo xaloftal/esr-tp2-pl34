@@ -1,19 +1,10 @@
-# Ficheiro: src/Node/control_server.py
 import socket
 import threading
 import json
-from config import NODE_TCP_PORT
+from config import NODE_TCP_PORT, NODE_UDP_PORT
+from aux_files.aux_message import Message, MsgType, create_flood_message
 
-def parse_message(raw):
-    """Converte bytes/string JSON -> dict Python."""
-    if isinstance(raw, bytes):
-        raw = raw.decode(errors="ignore")
-    try:
-        return json.loads(raw)
-    except Exception:
-        return None
-
-class ControlServer:
+class ControlServer():
     """
     Lado "servidor" do nó P2P: escuta por conexões TCP de controlo.
     """
@@ -25,10 +16,12 @@ class ControlServer:
                                  quando uma mensagem chega.
         """
         self.host_ip = host_ip
-        self.port = NODE_TCP_PORT
+        self.TCPport = NODE_TCP_PORT
+        self.UDPport = NODE_UDP_PORT
         self.handler_callback = handler_callback
         self.server_socket = None
-        print(f"[Servidor] A preparar listener em {self.host_ip}:{self.port}")
+        
+        
 
     def start(self):
         """Inicia o listener do servidor numa thread separada."""
@@ -51,6 +44,7 @@ class ControlServer:
             print(f"[Servidor] Erro fatal no servidor: {e}")
             if self.server_socket:
                 self.server_socket.close()
+                
 
     def _handle_connection(self, conn, addr):
         """Lida com uma única conexão TCP de um vizinho."""
@@ -60,7 +54,8 @@ class ControlServer:
             if not raw_data:
                 return
 
-            msg = parse_message(raw_data)
+            # Parse using Message class
+            msg = Message.from_bytes(raw_data)
             if not msg:
                 print(f"[Servidor] Mensagem JSON inválida de {sender_ip}")
                 return
@@ -72,3 +67,24 @@ class ControlServer:
             print(f"[Servidor] Erro a ler dados de {sender_ip}: {e}")
         finally:
             conn.close()
+            
+            
+    def start_flood(self):
+        """Inicia um FLOOD para se dar a conhecer (Etapa 2)."""
+        flood_id = str(uuid.uuid4())
+        msg = {
+            "msg_type": MessageType.FLOOD.value,
+            "msg_id": flood_id,
+            "srcip": self.node_ip, # Eu sou a origem
+            "data": {"hop_count": 0}, # Métrica inicial
+            # latencia
+        }
+
+        print(f"[{self.node_id}] A iniciar FLOOD (Etapa 2) id={flood_id}...")
+        
+        with self.lock:
+            self.flood_cache.add((self.node_ip, flood_id))
+
+        # Enviar para todos os vizinhos diretos
+        for neigh_ip in self.neighbors:
+            send_tcp_message(neigh_ip, msg)

@@ -157,107 +157,117 @@ class Message:
 
 # Factory methods for creating specific message types
 
-def create_flood_message(srcip, flood_id=None, hop_count=0, **kwargs):
-    """Create a FLOOD message."""
-    payload = {
-        "hop_count": hop_count,
-        **kwargs
-    }
-    return Message(
-        msg_type=MsgType.FLOOD,
-        srcip=srcip,
-        destip="broadcast",
-        payload=payload,
-        msg_id=flood_id
-    )
-
-
-def create_alive_message(srcip, destip):
-    """Create an ALIVE heartbeat message."""
-    return Message(
-        msg_type=MsgType.ALIVE,
-        srcip=srcip,
-        destip=destip,
-        payload={}
-    )
-
-
-def create_join_message(srcip, node_id):
-    """Create a JOIN message."""
-    return Message(
-        msg_type=MsgType.JOIN,
-        srcip=srcip,
-        destip="broadcast",
-        payload={"node_id": node_id}
-    )
-
-
-def create_leave_message(srcip, node_id, reason=""):
-    """Create a LEAVE message."""
-    return Message(
-        msg_type=MsgType.LEAVE,
-        srcip=srcip,
-        destip="broadcast",
-        payload={"node_id": node_id, "reason": reason}
-    )
-
-
-def create_stream_start_message(srcip, destip, stream_id):
-    """Create a STREAM_START message."""
-    return Message(
-        msg_type=MsgType.STREAM_START,
-        srcip=srcip,
-        destip=destip,
-        payload={"stream_id": stream_id}
-    )
-
-
-def create_stream_end_message(srcip, destip, stream_id):
-    """Create a STREAM_END message."""
-    return Message(
-        msg_type=MsgType.STREAM_END,
-        srcip=srcip,
-        destip=destip,
-        payload={"stream_id": stream_id}
-    )
-
-
-def create_stream_data_message(srcip, destip, stream_id, sequence, data):
-    """Create a STREAM_DATA message (UDP)."""
-    return Message(
-        msg_type=MsgType.STREAM_DATA,
-        srcip=srcip,
-        destip=destip,
-        payload={
-            "stream_id": stream_id,
-            "sequence": sequence,
-            "data": data
+# TODO: add the other metrics to the flood message
+    @classmethod
+    def create_flood_message(cls, srcip, flood_id=None, hop_count=0, stream_id=None):
+        """Create a FLOOD message."""
+        payload = {
+            "hop_count": hop_count,
+            "stream_id": stream_id
         }
-    )
+        return cls(
+            msg_type=MsgType.FLOOD,
+            srcip=srcip,
+            destip="broadcast",
+            payload=payload,
+            msg_id=flood_id
+        )
+
+
+    @classmethod
+    def create_alive_message(cls, srcip, destip):
+        """Create an ALIVE heartbeat message."""
+        return cls(
+            msg_type=MsgType.ALIVE,
+            srcip=srcip,
+            destip=destip,
+            payload={}
+        )
+
+
+    @classmethod
+    def create_join_message(cls, srcip, node_id):
+        """Create a JOIN message."""
+        return cls(
+            msg_type=MsgType.JOIN,
+            srcip=srcip,
+            destip="broadcast",
+            payload={"node_id": node_id}
+        )
+
+
+    @classmethod
+    def create_leave_message(cls, srcip, node_id):
+        """Create a LEAVE message."""
+        return cls(
+            msg_type=MsgType.LEAVE,
+            srcip=srcip,
+            destip= node_id,
+            
+        )
+
+
+    @classmethod
+    def create_stream_start_message(cls, srcip, destip, stream_id):
+        """Create a STREAM_START message."""
+        return cls(
+            msg_type=MsgType.STREAM_START,
+            srcip=srcip,
+            destip=destip,
+            payload={"stream_id": stream_id}
+        )
+
+
+    @classmethod
+    def create_stream_end_message(cls, srcip, destip, stream_id):
+        """Create a STREAM_END message."""
+        return cls(
+            msg_type=MsgType.STREAM_END,
+            srcip=srcip,
+            destip=destip,
+            payload={"stream_id": stream_id}
+        )
+
+
+    @classmethod
+    def create_stream_data_message(cls, srcip, destip, stream_id, sequence, data):
+        """Create a STREAM_DATA message (UDP)."""
+        return cls(
+            msg_type=MsgType.STREAM_DATA,
+            srcip=srcip,
+            destip=destip,
+            payload={
+                "stream_id": stream_id,
+                "sequence": sequence,
+                "data": data
+            }
+        )
     
     
-def create_register_message(node_id, bootstrapper_ip):
-    """Create a REGISTER message."""
-    return Message(
-        msg_type=MsgType.REGISTER,
-        srcip=node_id,
-        destip=bootstrapper_ip,  # Placeholder, replace with actual bootstrapper IP
-        payload={
-            "node_id": node_id
-        }
-    )
+    @classmethod
+    def create_register_message(cls, node_id, bootstrapper_ip):
+        """Create a REGISTER message."""
+        return cls(
+            msg_type=MsgType.REGISTER,
+            srcip=node_id,
+            destip=bootstrapper_ip,  #
+            payload={
+                "node_id": node_id
+            }
+        )
     
-# neigh vão ser o resultado de uma lista de vizinhos fornecida pelo bootstrapper
-def create_neighbour_message(srcip, destip, neighbours_ip):
-    """Create a NEIGHBOUR message."""
-    return Message(
-        msg_type=MsgType.NEIGHBOUR,
-        srcip=srcip,
-        destip=destip,
-        payload={
-            "neighbours": neighbours_ip
-        }
-    )
+    # neigh vão ser o resultado de uma lista de vizinhos fornecida pelo bootstrapper
+    @classmethod
+    def create_neighbour_message(cls, srcip, destip, neighbours_ip):
+        """Create a NEIGHBOUR message."""
+        return cls(
+            msg_type=MsgType.NEIGHBOUR,
+            srcip=srcip,
+            destip=destip,
+            payload={
+                "neighbours": neighbours_ip
+            }
+        )
 
 
 # Backward compatibility functions

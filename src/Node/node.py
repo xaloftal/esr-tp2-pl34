@@ -12,7 +12,7 @@ from control_server import ControlServer
 # Importa a porta TCP partilhada
 from config import NODE_TCP_PORT, BOOTSTRAPPER_PORT, NODE_UDP_PORT
 # Import Message class
-from aux_files.aux_message import Message, MsgType, create_flood_message, create_alive_message, create_leave_message, create_register_message
+from aux_files.aux_message import Message, MsgType
 
 
 class Node:
@@ -21,28 +21,32 @@ class Node:
     define a lógica de processamento de mensagens.
     """
     
-    def __init__(self, node_id, node_ip, bootstrapper_ip,  is_server=False):
+    def __init__(self, node_id, node_ip, bootstrapper_ip,  is_server=False, stream_id=None):
         self.node_id = node_id
         self.node_ip = node_ip
         self.last_alive = {}     # dicionário: {ip : timestamp}
         self.fail_count = {}     # dicionário: {ip : nº de falhas}
         self.leave_cache = set()
+        self.join_cache = set()
         self.flood_cache = set()
         self.network_ready = False
         self.bootstrapper_ip = bootstrapper_ip
-
+ 
         # --- Flag de Servidor ---
         self.is_server = is_server 
         print(f"[{self.node_id}] Tipo: {'Servidor de Stream' if self.is_server else 'Cliente/Nó Intermédio'}")
         
         # --- Estado da Etapa 1: Topologia Overlay ---
-        self.neighbors = self.register_with_bootstrapper(self.node_ip)
+        self.neighbors = {}  # {ip: is_active}
+        neighbor_list = self.register_with_bootstrapper(self.node_ip)
+        for neigh in neighbor_list:
+            self.neighbors[neigh] = True  # All neighbors start as active
         # O "servidor" P2P que escuta por mensagens
-        self.server = ControlServer(self.node_ip, self.handle_incoming_message)
+        self.server = ControlServer(self.node_ip, self.handle_incoming_message, stream_id)
         
         
         # --- Estado da Etapa 2: Rotas ---
-        # {destination_ip: (next_hop_ip, metrica)}
+        # {stream_id: {src_ip: [( hop_count, is_active), ...]}}
         self.routing_table = {} 
         self.flood_cache = set() # Evita loops de flood
         
@@ -56,7 +60,7 @@ class Node:
 
         # ETAPA 1: Iniciar o "servidor" para escutar vizinhos
         self.server.start()
-        t = threading.Thread(target=self.maintenance_loop, daemon=True)
+        t = threading.Thread(target=self.heartbeat, daemon=True)
         t.start()
         
         print(f"[{self.node_id}] Nó iniciado. Vizinhos: {self.neighbors}")
@@ -76,7 +80,7 @@ class Node:
             print(f"[Cliente] Ligado ao Bootstrapper em {self.bootstrapper_ip}:{BOOTSTRAPPER_PORT}")
 
             # Envia a mensagem de registo
-            message = create_register_message(node_ip, self.bootstrapper_ip)
+            message = Message.create_register_message(node_ip, self.bootstrapper_ip)
             client.sendall(message.to_bytes())
 
             # Recebe a resposta (JSON com a lista de vizinhos)
@@ -84,6 +88,10 @@ class Node:
             client.close()
 
             data = Message.from_json(response_raw)
+            if not data:
+                print(f"[Cliente] Falha a parsear resposta do bootstrapper: {response_raw}")
+                return []
+                
             neighbors = data.get_payload().get("neighbours", [])
             
             print(f"[Cliente] Vizinhos recebidos do bootstrapper: {neighbors}")
@@ -99,12 +107,12 @@ class Node:
 
 
 
-    def send_tcp_message(self, dest_ip, msg_dict):
+    def send_tcp_message(self, dest_ip, message):
         """
-        Envia uma mensagem de controlo (dicionário Python) para um nó vizinho.
+        Envia uma mensagem de controlo (Message object) para um nó vizinho.
         """
         try:
-            msg = Message.from_dict(msg_dict).to_bytes()
+            msg = message.to_bytes() if isinstance(message, Message) else Message.from_dict(message).to_bytes()
             
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
                 sock.settimeout(2.0) # Timeout curto para não bloquear
@@ -125,26 +133,26 @@ class Node:
         if not self.network_ready:
             self.network_ready = True
 
-        msg_type = Message.get_message_type(msg)
+        msg_type = msg.get_type() if isinstance(msg, Message) else msg.get("type")
 
         # --- FLOOD ---
         if msg_type == MsgType.FLOOD:
-            self.handle_flood_message(msg, sender_ip)
+            self.handle_flood_message(msg)
 
         # --- ALIVE recebido: responder silenciosamente ---
         elif msg_type == MsgType.ALIVE:           
-            reply = create_alive_message(self.node_ip, sender_ip)
-            self.send_tcp_message(sender_ip, reply)
-            
-        # --- ESTOU_AQUI recebido: atualizar estado do vizinho ---
-        elif msg_type == MsgType.ALIVE_ACK:
+            with self.lock:
+                self.last_alive[sender_ip] = time.time()
+                self.fail_count[sender_ip] = 0
             print(f"[{self.node_id}] {sender_ip} está vivo")
+            
 
         # --- LEAVE ---
         elif msg_type == MsgType.LEAVE:
             self.handle_leave_message(msg, sender_ip)
-            
-            
+        
+        elif msg_type == MsgType.JOIN:
+            self.handle_join_message(msg, sender_ip)
             
             
 
@@ -152,14 +160,15 @@ class Node:
     # ETAPA 2: LÓGICA DE CONSTRUÇÃO DE ROTAS (Flooding)
     # ------------------------------------------------------------------
     
-    def handle_flood_message(self, msg, sender_ip):
+    def handle_flood_message(self, msg):
         """
             flood
         """
-        src_ip = msg.get("srcip")
-        msg_id = msg.get("msg_id")
-        data = msg.get("data", {})
-        hop_count = data.get("hop_count", 0)
+        src_ip = msg.get_src() if isinstance(msg, Message) else msg.get("srcip")
+        msg_id = msg.id if isinstance(msg, Message) else msg.get("msg_id")
+        payload = msg.get_payload() if isinstance(msg, Message) else msg.get("payload", {})
+        hop_count = payload.get("hop_count", 0)
+        stream_id = payload.get("stream_id", None)
 
         key = (src_ip, msg_id)
 
@@ -171,45 +180,37 @@ class Node:
             # 2 — Registar FLOOD para não processar de novo
             self.flood_cache.add(key)
 
-            # 3 — Atualizar melhor rota (só se for mais curta)
-            if src_ip and src_ip != self.node_ip:
-                current = self.routing_table.get(src_ip, (None, float('inf')))[1]
+            # 3 — Adicionar rota à tabela (mantém todas as rotas)
+            if src_ip and src_ip != self.node_ip and stream_id:
+                # Inicializar stream_id se não existir
+                if stream_id not in self.routing_table:
+                    self.routing_table[stream_id] = {}
+                
+                # Inicializar src se não existir
+                if src_ip not in self.routing_table[stream_id]:
+                    self.routing_table[stream_id][src_ip] = []                
+                # Adicionar nova rota se não existir
 
-                if hop_count < current:
-                    self.routing_table[src_ip] = (sender_ip, hop_count)
-                    print(f"[{self.node_id}] Nova rota: {src_ip} -> {sender_ip} (métrica {hop_count})")
+                self.routing_table[stream_id][src_ip].append((hop_count, True))
+                print(f"[{self.node_id}] Nova rota para stream {stream_id}: {src_ip} -> (métrica {hop_count})")
 
-        # 4 — Criar cópia segura da mensagem
-        new_msg = {
-            "msg_type": MessageType.FLOOD.value,
-            "msg_id": msg_id,
-            "srcip": src_ip,
-            "data": {"hop_count": hop_count + 1}
-        }
-
-        # 5 — Reenviar FLOOD apenas para outros vizinhos
-        for neigh in self.neighbors:
-            if neigh != sender_ip:
+        # 4 — Criar cópia da mensagem com ESTE nó como origem (para que vizinhos apenas vejam o hop anterior)
+        new_msg = Message.create_flood_message(srcip=self.node_ip, flood_id=msg_id, hop_count=hop_count + 1, stream_id=stream_id)
+        # 5 — Reenviar FLOOD apenas para outros vizinhos ativos
+        for neigh, is_active in self.neighbors.items():
+            if neigh != src_ip and is_active:
                 self.send_tcp_message(neigh, new_msg)
                 
-                
-                
-
-
-    
     def announce_leave(self):
         """
         Anuncia aos vizinhos que vai sair
         """
-        msg = {
-            "msg_type": MessageType.LEAVE.value,
-            "node_ip": self.node_ip
-        }
-
         print(f"[{self.node_id}] A anunciar LEAVE...")
 
-        for neigh_ip in self.neighbors:
-            self.send_tcp_message(neigh_ip, msg)
+        for neigh_ip, is_active in self.neighbors.items():
+            if is_active:
+                msg = Message.create_leave_message(self.node_ip, neigh_ip) 
+                self.send_tcp_message(neigh_ip, msg)
 
         # garantir que a mensagem sai antes do processo morrer
         time.sleep(0.2)
@@ -219,71 +220,108 @@ class Node:
         """
         processa mensagem LEAVE recebida
         """
-        dead_ip = msg.get("node_ip")
+        dead_ip = msg.get_src() if isinstance(msg, Message) else msg.get("srcip")
 
         # evitar duplicados
         if dead_ip in self.leave_cache:
             return
         self.leave_cache.add(dead_ip)
+        
+        # se tiver no join_cache, remover
+        self.join_cache.discard(dead_ip)
 
         print(f"[{self.node_id}] O vizinho {dead_ip} saiu da rota.")
 
         with self.lock:
-            # remover do conjunto de vizinhos
+            # Marcar vizinho como inativo em vez de remover
             if dead_ip in self.neighbors:
-                self.neighbors.remove(dead_ip)
+                self.neighbors[dead_ip] = False
+                print(f"[{self.node_id}] Vizinho {dead_ip} marcado como inativo")
 
-            # remover rotas diretas
-            if dead_ip in self.routing_table:
-                del self.routing_table[dead_ip]
-
-            # remover rotas onde era next hop
-            to_delete = []
-            for dest, (next_hop, _) in self.routing_table.items():
-                if next_hop == dead_ip:
-                    to_delete.append(dest)
-
-            for dest in to_delete:
-                del self.routing_table[dest]
+            # Marcar todas as rotas para este destino como inativas
+            for stream_id in self.routing_table:
+                if dead_ip in self.routing_table[stream_id]:
+                    routes = self.routing_table[stream_id][dead_ip]
+                    for i, (metric, is_active) in enumerate(routes):
+                        if is_active:
+                            self.routing_table[stream_id][dead_ip][i] = (metric, False)
 
         # NÃO PROPAGAR LEAVE aos outros vizinhos
 
+    def handle_join_message(self, msg, sender_ip):
+        """
+        processa mensagem JOIN recebida
+        """
+        new_ip = msg.get_src() if isinstance(msg, Message) else msg.get("srcip")
+
+        # evitar duplicados
+        if new_ip in self.join_cache:
+            return
+        self.join_cache.add(new_ip)        
+        # se tiver no leave_cache, remover
+        self.leave_cache.discard(new_ip)
+
+        print(f"[{self.node_id}] O vizinho {new_ip} juntou-se à rede.")
+
+        with self.lock:
+            # Adicionar ou reativar vizinho
+            if new_ip in self.neighbors:
+                self.neighbors[new_ip] = True
+                print(f"[{self.node_id}] Vizinho {new_ip} reativado")
+            else:
+                self.neighbors[new_ip] = True
+                print(f"[{self.node_id}] Novo vizinho {new_ip} adicionado")
+            
+            # ativar, se tiver, rotas inativas para este nó
+            for stream_id in self.routing_table:
+                if new_ip in self.routing_table[stream_id]:
+                    routes = self.routing_table[stream_id][new_ip]
+                    for i, (metric, is_active) in enumerate(routes):
+                        if not is_active:
+                            self.routing_table[stream_id][new_ip][i] = (metric, True)
+
+        # NÃO PROPAGAR JOIN aos outros vizinhos
 
     def local_leave_cleanup(self, dead_ip):
         """
-        Remove um vizinho morto
+        Remove um vizinho morto - marca rotas como inativas
         """
         with self.lock:
+            # Marcar vizinho como inativo
             if dead_ip in self.neighbors:
-                self.neighbors.remove(dead_ip)
+                self.neighbors[dead_ip] = False
+                print(f"[{self.node_id}] Vizinho {dead_ip} marcado como inativo (timeout)")
+            
+           # Marcar todas as rotas para este destino como inativas
+            for stream_id in self.routing_table:
+                if dead_ip in self.routing_table[stream_id]:
+                    routes = self.routing_table[stream_id][dead_ip]
+                    for i, (metric, is_active) in enumerate(routes):
+                        if is_active:
+                            # Marcar como inativa em vez de remover
+                            self.routing_table[stream_id][dead_ip][i] = (metric, False)
+                            print(f"[{self.node_id}] Rota inativada: stream {stream_id}, destino {dead_ip}")
 
-            # Remover rotas cujo next hop é o morto
-            if dead_ip in self.routing_table:
-                del self.routing_table[dead_ip]
 
-            to_delete = []
-            for dest, (next_hop, metric) in self.routing_table.items():
-                if next_hop == dead_ip:
-                    to_delete.append(dest)
-
-            for dest in to_delete:
-                del self.routing_table[dest]
-
-
-    def start_flood(self):
+    def start_flood(self, stream_id=None):
         """
         Inicia um flood pela rede (apenas servidor).
         """
         msg_id = str(uuid.uuid4())
-        flood_msg = create_flood_message(self.node_ip, "broadcast", msg_id, hop_count=0)
+        # Se não fornecer stream_id, usar o IP do nó como identificador
+        if not stream_id:
+            stream_id = f"stream_{self.node_ip}"
         
-        print(f"[{self.node_id}] A iniciar FLOOD com ID {msg_id}")
+        flood_msg = Message.create_flood_message(self.node_ip, flood_id=msg_id, hop_count=0, stream_id=stream_id)
         
-        # Enviar para todos os vizinhos
-        for neigh in self.neighbors:
-            self.send_tcp_message(neigh, flood_msg)
+        print(f"[{self.node_id}] A iniciar FLOOD com ID {msg_id} para stream {stream_id}")
+        
+        # Enviar para todos os vizinhos ativos
+        for neigh, is_active in self.neighbors.items():
+            if is_active:
+                self.send_tcp_message(neigh, flood_msg)
     
-    def maintenance_loop(self):
+    def heartbeat(self):
         while not self.network_ready:
             time.sleep(1)
 
@@ -295,10 +333,13 @@ class Node:
             time.sleep(HEARTBEAT_INTERVAL)
             now = time.time()
 
-            for neigh in list(self.neighbors):
+            for neigh, is_active in list(self.neighbors.items()):
+                # Apenas enviar ALIVE para vizinhos ativos
+                if not is_active:
+                    continue
 
                 # enviar ALIVE silencioso
-                self.send_tcp_message(neigh, { "msg_type": "ALIVE", "src": self.node_ip })
+                self.send_tcp_message(neigh, Message.create_alive_message(self.node_ip, neigh))
 
                 # primeira vez — criar timestamp inicial
                 if neigh not in self.last_alive:
@@ -327,7 +368,7 @@ class Node:
 # ------------------------------------------------------------------
 if __name__ == "__main__":
     if len(sys.argv) < 4: 
-        print("Uso: python3 node.py NODE_ID NODE_IP BOOTSTRAPPER_IP [--server]")
+        print("Uso: python3 node.py NODE_ID NODE_IP BOOTSTRAPPER_IP [--server] STREAM_ID")
         print("\nExemplo Servidor:")
         print("  python3 node.py streamer 10.0.0.20 10.0.20.20 --server")
         print("\nExemplo Cliente:")
@@ -337,11 +378,12 @@ if __name__ == "__main__":
     node_id = sys.argv[1]
     node_ip = sys.argv[2]
     boot_ip = sys.argv[3]
+    stream_id = sys.argv[5] if len(sys.argv) > 5 else None
 
     
     is_server_flag = "--server" in sys.argv
     
-    node = Node(node_id, node_ip, boot_ip, is_server=is_server_flag)
+    node = Node(node_id, node_ip, boot_ip, is_server=is_server_flag, stream_id=stream_id)
 
     # 2. Iniciar serviços (Etapa 1: Registar e Escutar)
     node.start()
@@ -365,7 +407,7 @@ if __name__ == "__main__":
                     print("Erro: Apenas o nó servidor pode iniciar um 'flood'.")
 
             elif cmd == "routes":
-                print(f"[{node.node_id}] Tabela de Rotas (Destino: (Next_Hop, Métrica)):")
+                print(f"[{node.node_id}] Tabela de Rotas (stream_id: [source_ip: ( Métrica, is_active))]:")
                 print(node.routing_table)
 
             elif cmd == "neigh":

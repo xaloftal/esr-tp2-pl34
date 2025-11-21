@@ -40,7 +40,7 @@ class Node:
         self.neighbors = {}  # {ip: is_active}
         neighbor_list = self.register_with_bootstrapper(self.node_ip)
         for neigh in neighbor_list:
-            self.neighbors[neigh] = True  # All neighbors start as active
+            self.neighbors[neigh] = False  # All neighbors start inactive
         # O "servidor" P2P que escuta por mensagens
         self.server = ControlServer(self.node_ip, self.handle_incoming_message, stream_id)
         
@@ -169,6 +169,8 @@ class Node:
 
         hop_count = payload.get("hop_count", 0)
         stream_id = payload.get("stream_id", None)
+        start_ts = payload.get("start_timestamp", time.time())
+        current_latency = (time.time() - start_ts) * 1000
 
         # ------------------- 2. Identificação do originador -------------------
         origin_ip = payload.get("origin_ip", src_ip)
@@ -190,16 +192,16 @@ class Node:
                 if src_ip not in self.routing_table[stream_id]:
                     self.routing_table[stream_id][src_ip] = []
 
-                self.routing_table[stream_id][src_ip].append((hop_count, True))
+                self.routing_table[stream_id][src_ip].append((hop_count,current_latency ,False))
                 print(f"[{self.node_id}] Nova rota para stream {stream_id}: via {src_ip} (hops={hop_count})")
 
         # ------------------ 6. Criar mensagem atualizada ------------------
-        new_msg = Message.create_flood_message(srcip=self.node_ip,origin_flood=origin_ip,flood_id=msg_id,hop_count=hop_count + 1,stream_id=stream_id
+        new_msg = Message.create_flood_message(srcip=self.node_ip,origin_flood=origin_ip,flood_id=msg_id,hop_count=hop_count + 1,stream_id=stream_id,start_timestamp=start_ts
         )
 
-        # ------------------ 7. Reenviar para vizinhos ativos ------------------
+        # ------------------ 7. Reenviar para vizinhos ------------------
         for neigh, is_active in self.neighbors.items():
-            if neigh != src_ip and is_active:
+            if neigh != src_ip:
                 self.send_tcp_message(neigh, new_msg)
 
                 
@@ -313,15 +315,16 @@ class Node:
         # Se não fornecer stream_id, usar o IP do nó como identificador
         if not stream_id:
             stream_id = f"stream_{self.node_ip}"
-        
+        key = (self.node_ip, msg_id)
+        with self.lock:
+            self.flood_cache.add(key)
         flood_msg = Message.create_flood_message(self.node_ip, origin_flood = self.node_ip, flood_id=msg_id, hop_count=0, stream_id=stream_id)
         
         print(f"[{self.node_id}] A iniciar FLOOD com ID {msg_id} para stream {stream_id}")
         
-        # Enviar para todos os vizinhos ativos
+        # Enviar para todos os
         for neigh, is_active in self.neighbors.items():
-            if is_active:
-                self.send_tcp_message(neigh, flood_msg)
+            self.send_tcp_message(neigh, flood_msg)
     
     def heartbeat(self):
         while not self.network_ready:
@@ -409,7 +412,7 @@ if __name__ == "__main__":
                     print("Erro: Apenas o nó servidor pode iniciar um 'flood'.")
 
             elif cmd == "routes":
-                print(f"[{node.node_id}] Tabela de Rotas (stream_id: [source_ip: ( Métrica, is_active))]:")
+                print(f"[{node.node_id}] Tabela de Rotas (stream_id: [source_ip: ( Métrica, Latência,is_active))]:")
                 print(node.routing_table)
 
             elif cmd == "neigh":

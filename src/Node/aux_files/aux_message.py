@@ -159,12 +159,16 @@ class Message:
 
 # TODO: add the other metrics to the flood message
     @classmethod
-    def create_flood_message(cls, srcip, origin_flood ,flood_id=None, hop_count=0, stream_id=None):
+    def create_flood_message(cls, srcip, origin_flood ,flood_id=None, hop_count=0, stream_id=None,start_timestamp=None):
         """Create a FLOOD message."""
+        if start_timestamp is None:
+            start_timestamp = time.time()
+
         payload = {
             "hop_count": hop_count,
             "stream_id": stream_id,
-            "origin_ip":origin_flood
+            "origin_ip":origin_flood,
+            "start_timestamp": start_timestamp
         }
         return cls(
             msg_type=MsgType.FLOOD,

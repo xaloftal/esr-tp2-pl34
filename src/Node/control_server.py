@@ -2,14 +2,14 @@ import socket
 import threading
 import json
 from config import NODE_TCP_PORT, NODE_UDP_PORT
-from aux_files.aux_message import Message, MsgType, create_flood_message
+from aux_files.aux_message import Message, MsgType
 
 class ControlServer():
     """
     Lado "servidor" do nó P2P: escuta por conexões TCP de controlo.
     """
     
-    def __init__(self, host_ip, handler_callback):
+    def __init__(self, host_ip, handler_callback, stream_id):
         """
         :param host_ip: O IP local onde este nó deve escutar.
         :param handler_callback: A função (no 'node.py') a chamar 
@@ -20,7 +20,7 @@ class ControlServer():
         self.UDPport = NODE_UDP_PORT
         self.handler_callback = handler_callback
         self.server_socket = None
-        
+        self.stream_id = stream_id
         
 
     def start(self):
@@ -32,9 +32,9 @@ class ControlServer():
         try:
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.server_socket.bind((self.host_ip, self.port))
+            self.server_socket.bind((self.host_ip, self.TCPport))
             self.server_socket.listen()
-            print(f"[Servidor] A escutar em {self.host_ip}:{self.port}")
+            print(f"[Servidor] A escutar em {self.host_ip}:{self.TCPport}")
 
             while True:
                 conn, addr = self.server_socket.accept()
@@ -48,7 +48,7 @@ class ControlServer():
 
     def _handle_connection(self, conn, addr):
         """Lida com uma única conexão TCP de um vizinho."""
-        sender_ip = addr[0]
+        connection_ip = addr[0]  # IP real da conexão
         try:
             raw_data = conn.recv(65535) # Recebe a mensagem completa
             if not raw_data:
@@ -57,8 +57,11 @@ class ControlServer():
             # Parse using Message class
             msg = Message.from_bytes(raw_data)
             if not msg:
-                print(f"[Servidor] Mensagem JSON inválida de {sender_ip}")
+                print(f"[Servidor] Mensagem JSON inválida de {connection_ip}")
                 return
+            
+            # Usar o IP declarado na mensagem, não o IP da conexão
+            sender_ip = msg.get_src() or connection_ip
             
             # Entrega a mensagem ao "cérebro" (node.py)
             self.handler_callback(msg, sender_ip)
@@ -72,13 +75,15 @@ class ControlServer():
     def start_flood(self):
         """Inicia um FLOOD para se dar a conhecer (Etapa 2)."""
         flood_id = str(uuid.uuid4())
-        msg = {
-            "msg_type": MessageType.FLOOD.value,
-            "msg_id": flood_id,
-            "srcip": self.node_ip, # Eu sou a origem
-            "data": {"hop_count": 0}, # Métrica inicial
-            # latencia
-        }
+        
+        msg = Message.create_flood_message(
+            srcip=self.node_ip,
+            flood_id=flood_id,
+            hop_count=0,
+            stream_id=self.stream_id
+            
+            #TODO: add here the other metrics 
+        )
 
         print(f"[{self.node_id}] A iniciar FLOOD (Etapa 2) id={flood_id}...")
         

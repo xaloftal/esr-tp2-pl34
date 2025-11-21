@@ -64,8 +64,8 @@ class Bootstrapper():
             payload = msg.get_payload()
             
             if msg_type == "REGISTER":
-                # Extract node IP from payload
-                node_ip = payload.get("node_ip", sender_ip)
+                # Extract node IP from srcip or payload
+                node_ip = msg.get_src() or payload.get("node_id", sender_ip)
                 print(f"[BOOT] Registration request for IP: {node_ip}")
                 
                 # Get neighbors from overlay map
@@ -74,11 +74,12 @@ class Bootstrapper():
                 # Create response message
                 resp_message = Message.create_neighbour_message(
                     srcip=self.host,
+                    destip=node_ip,
+                    neighbours_ip=neighbors
                 )
                 
-                
                 # Send response
-                client_socket.sendall(response_msg.to_bytes())
+                client_socket.sendall(resp_message.to_bytes())
                 print(f"[BOOT] Sent neighbors to {node_ip}: {neighbors}")
                 
             else:

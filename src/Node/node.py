@@ -159,7 +159,6 @@ class Node:
     # ------------------------------------------------------------------
     # ETAPA 2: LÓGICA DE CONSTRUÇÃO DE ROTAS (Flooding)
     # ------------------------------------------------------------------
-    
     def handle_flood_message(self, msg):
         """
             flood
@@ -167,39 +166,42 @@ class Node:
         src_ip = msg.get_src() if isinstance(msg, Message) else msg.get("srcip")
         msg_id = msg.id if isinstance(msg, Message) else msg.get("msg_id")
         payload = msg.get_payload() if isinstance(msg, Message) else msg.get("payload", {})
+
         hop_count = payload.get("hop_count", 0)
         stream_id = payload.get("stream_id", None)
 
-        key = (src_ip, msg_id)
+        # ------------------- 2. Identificação do originador -------------------
+        origin_ip = payload.get("origin_ip", src_ip)
+
+        # A chave de flood deve ser baseada no originador (constante), não no vizinho atual
+        key = (origin_ip, msg_id)
 
         with self.lock:
-            # 1 — Evitar receber o mesmo FLOOD duas vezes
             if key in self.flood_cache:
                 return
 
-            # 2 — Registar FLOOD para não processar de novo
+            # ------------------ 4. Registar flood ------------------
             self.flood_cache.add(key)
 
-            # 3 — Adicionar rota à tabela (mantém todas as rotas)
             if src_ip and src_ip != self.node_ip and stream_id:
-                # Inicializar stream_id se não existir
                 if stream_id not in self.routing_table:
                     self.routing_table[stream_id] = {}
-                
-                # Inicializar src se não existir
+
                 if src_ip not in self.routing_table[stream_id]:
-                    self.routing_table[stream_id][src_ip] = []                
-                # Adicionar nova rota se não existir
+                    self.routing_table[stream_id][src_ip] = []
 
                 self.routing_table[stream_id][src_ip].append((hop_count, True))
-                print(f"[{self.node_id}] Nova rota para stream {stream_id}: {src_ip} -> (métrica {hop_count})")
+                print(f"[{self.node_id}] Nova rota para stream {stream_id}: via {src_ip} (hops={hop_count})")
 
-        # 4 — Criar cópia da mensagem com ESTE nó como origem (para que vizinhos apenas vejam o hop anterior)
-        new_msg = Message.create_flood_message(srcip=self.node_ip, flood_id=msg_id, hop_count=hop_count + 1, stream_id=stream_id)
-        # 5 — Reenviar FLOOD apenas para outros vizinhos ativos
+        # ------------------ 6. Criar mensagem atualizada ------------------
+        new_msg = Message.create_flood_message(srcip=self.node_ip,origin_flood=origin_ip,flood_id=msg_id,hop_count=hop_count + 1,stream_id=stream_id
+        )
+
+        # ------------------ 7. Reenviar para vizinhos ativos ------------------
         for neigh, is_active in self.neighbors.items():
             if neigh != src_ip and is_active:
                 self.send_tcp_message(neigh, new_msg)
+
                 
     def announce_leave(self):
         """
@@ -312,7 +314,7 @@ class Node:
         if not stream_id:
             stream_id = f"stream_{self.node_ip}"
         
-        flood_msg = Message.create_flood_message(self.node_ip, flood_id=msg_id, hop_count=0, stream_id=stream_id)
+        flood_msg = Message.create_flood_message(self.node_ip, origin_flood = self.node_ip, flood_id=msg_id, hop_count=0, stream_id=stream_id)
         
         print(f"[{self.node_id}] A iniciar FLOOD com ID {msg_id} para stream {stream_id}")
         

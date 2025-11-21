@@ -16,3 +16,5 @@ BOOTSTRAPPER_PORT = 5000 # Porta do bootstrapper
 # --- Configs dos Nós da Overlay ---
 # Porta TCP onde CADA nó vai escutar por msgs de controlo (FLOOD, etc.)
 NODE_TCP_PORT = 6000
+
+NODE_UDP_PORT = 7000 

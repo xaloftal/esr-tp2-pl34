@@ -159,14 +159,14 @@ class Message:
 
 # TODO: add the other metrics to the flood message
     @classmethod
-    def create_flood_message(cls, srcip, origin_flood ,flood_id=None, hop_count=0, stream_id=None,start_timestamp=None):
+    def create_flood_message(cls, srcip, origin_flood ,flood_id=None, hop_count=0, video=None,start_timestamp=None):
         """Create a FLOOD message."""
         if start_timestamp is None:
             start_timestamp = time.time()
 
         payload = {
             "hop_count": hop_count,
-            "stream_id": stream_id,
+            "video": video,
             "origin_ip":origin_flood,
             "start_timestamp": start_timestamp
         }
@@ -213,36 +213,36 @@ class Message:
 
 
     @classmethod
-    def create_stream_start_message(cls, srcip, destip, stream_id):
+    def create_stream_start_message(cls, srcip, destip, video):
         """Create a STREAM_START message."""
         return cls(
             msg_type=MsgType.STREAM_START,
             srcip=srcip,
             destip=destip,
-            payload={"stream_id": stream_id}
+            payload={"video": video}
         )
 
 
     @classmethod
-    def create_stream_end_message(cls, srcip, destip, stream_id):
+    def create_stream_end_message(cls, srcip, destip, video):
         """Create a STREAM_END message."""
         return cls(
             msg_type=MsgType.STREAM_END,
             srcip=srcip,
             destip=destip,
-            payload={"stream_id": stream_id}
+            payload={"video": video}
         )
 
 
     @classmethod
-    def create_stream_data_message(cls, srcip, destip, stream_id, sequence, data):
+    def create_stream_data_message(cls, srcip, destip, video, sequence, data):
         """Create a STREAM_DATA message (UDP)."""
         return cls(
             msg_type=MsgType.STREAM_DATA,
             srcip=srcip,
             destip=destip,
             payload={
-                "stream_id": stream_id,
+                "video": video,
                 "sequence": sequence,
                 "data": data
             }

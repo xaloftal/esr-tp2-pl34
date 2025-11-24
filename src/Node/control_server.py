@@ -9,7 +9,7 @@ class ControlServer():
     Lado "servidor" do nó P2P: escuta por conexões TCP de controlo.
     """
     
-    def __init__(self, host_ip, handler_callback, stream_id):
+    def __init__(self, host_ip, handler_callback):
         """
         :param host_ip: O IP local onde este nó deve escutar.
         :param handler_callback: A função (no 'node.py') a chamar 
@@ -20,7 +20,21 @@ class ControlServer():
         self.UDPport = NODE_UDP_PORT
         self.handler_callback = handler_callback
         self.server_socket = None
-        self.stream_id = stream_id
+    
+    def __init__(self, host_ip, handler_callback, video):
+        """
+        :param host_ip: O IP local onde este nó deve escutar.
+        :param handler_callback: A função (no 'node.py') a chamar 
+                                 quando uma mensagem chega.
+        """
+        self.host_ip = host_ip
+        self.TCPport = NODE_TCP_PORT
+        self.UDPport = NODE_UDP_PORT
+        self.handler_callback = handler_callback
+        self.server_socket = None
+        
+        #video(s) disponível(is)
+        self.video = video
         
 
     def start(self):
@@ -31,7 +45,6 @@ class ControlServer():
         """Loop principal do servidor (corre na thread)."""
         try:
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self.server_socket.bind((self.host_ip, self.TCPport))
             self.server_socket.listen()
             print(f"[Servidor] A escutar em {self.host_ip}:{self.TCPport}")
@@ -58,13 +71,9 @@ class ControlServer():
             msg = Message.from_bytes(raw_data)
             if not msg:
                 print(f"[Servidor] Mensagem JSON inválida de {connection_ip}")
-                return
-            
-            # Usar o IP declarado na mensagem, não o IP da conexão
-            sender_ip = msg.get_src() or connection_ip
-            
+                return           
             # Entrega a mensagem ao "cérebro" (node.py)
-            self.handler_callback(msg, sender_ip)
+            self.handler_callback(msg)
 
         except Exception as e:
             print(f"[Servidor] Erro a ler dados de {sender_ip}: {e}")
@@ -72,24 +81,38 @@ class ControlServer():
             conn.close()
             
             
-    def start_flood(self):
-        """Inicia um FLOOD para se dar a conhecer (Etapa 2)."""
-        flood_id = str(uuid.uuid4())
-        
-        msg = Message.create_flood_message(
-            srcip=self.node_ip,
-            flood_id=flood_id,
-            hop_count=0,
-            stream_id=self.stream_id
             
-            #TODO: add here the other metrics 
-        )
-
-        print(f"[{self.node_id}] A iniciar FLOOD (Etapa 2) id={flood_id}...")
+    def start_flood(self):
+        """
+        Inicia um flood pela rede (apenas servidor).
+        """
+        msg_id = str(uuid.uuid4())
+        # Se não fornecer video, usar o IP do nó como identificador
+        key = (self.node_ip, msg_id)
         
         with self.lock:
-            self.flood_cache.add((self.node_ip, flood_id))
-
-        # Enviar para todos os vizinhos diretos
-        for neigh_ip in self.neighbors:
-            send_tcp_message(neigh_ip, msg)
+            self.flood_cache.add(key)
+        flood_msg = Message.create_flood_message(self.node_ip, origin_flood = self.node_ip, flood_id=msg_id, hop_count=0, video=self.video)
+        
+        print(f"[{self.node_id}] A iniciar FLOOD com ID {msg_id} para stream {self.video}")
+        
+        # Enviar para todos os
+        for neigh, is_active in self.neighbors.items():
+            self.send_tcp_message(neigh, flood_msg)
+            
+    
+    
+    
+    def start_stream_to_client(self, client_ip, video):
+        """Inicia o envio do stream de vídeo para o cliente."""
+        # Aqui implementamos o envio do vídeo via RTP/UDP
+        # Esta função deve criar um servidor RTP que envia os pacotes para o client_ip
+        
+        # video is an array of available videos
+        rtp_server = RtpServer(
+            video_file=self.video[video],  # Assumindo que self.video é um dicionário {video: video_path}
+            client_ip=client_ip,
+            client_port=self.UDPport
+        )
+        rtp_server.start()
+        print(f"[{self.node_id}] Envio do stream {video} iniciado para {client_ip}.")

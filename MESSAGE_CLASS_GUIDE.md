@@ -52,9 +52,9 @@ create_flood_message(srcip, flood_id=None, hop_count=0, **kwargs)
 create_alive_message(srcip, destip)
 create_join_message(srcip, node_id)
 create_leave_message(srcip, node_id, reason="")
-create_stream_start_message(srcip, destip, stream_id)
-create_stream_end_message(srcip, destip, stream_id)
-create_stream_data_message(srcip, destip, stream_id, sequence, data)
+create_stream_start_message(srcip, destip, video)
+create_stream_end_message(srcip, destip, video)
+create_stream_data_message(srcip, destip, video, sequence, data)
 ```
 
 ## Sending Messages
@@ -81,7 +81,7 @@ sock.close()
 msg = create_stream_data_message(
     srcip="192.168.1.100",
     destip="192.168.1.101",
-    stream_id="video1",
+    video="video1",
     sequence=42,
     data="base64_encoded_data"
 )

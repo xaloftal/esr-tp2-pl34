@@ -9,6 +9,7 @@ import json
 import socket
 
 from control_server import ControlServer
+from control_client import ControlClient
 # Importa a porta TCP partilhada
 from config import NODE_TCP_PORT, BOOTSTRAPPER_PORT, NODE_UDP_PORT
 # Import Message class
@@ -32,6 +33,7 @@ class Node:
         self.flood_cache = set()
         self.network_ready = False
         self.bootstrapper_ip = bootstrapper_ip
+        self.video = video
  
         # --- Flag de Servidor ---
         self.is_server = is_server        
@@ -45,21 +47,23 @@ class Node:
         neighbor_list = self.register_with_bootstrapper(self.node_ip)
         
         for neigh in neighbor_list:
-            self.neighbors[neigh] = False  # All neighbors start inactive
+            self.neighbors[neigh] = True  # All neighbors start inactive
         
-        if self.is_server:
-            self.server = ControlServer(host_ip = self.node_ip,  
-                                                    handler_callback = self.handle_incoming_message,   
-                                                    video=video)
-        else:
-            self.server = ControlServer(host_ip = self.node_ip,  
-                                                    handler_callback = self.handle_incoming_message)
-        
+        # TODOS OS NODES TÊM CONTROL SERVER
+        self.server = ControlServer(
+            host_ip=self.node_ip,
+            handler_callback=self.handle_incoming_message,
+            video=video
+        )
+
+        # Se também for client → cria o control client interno
         if self.is_client:
-            self.client = ControlClient( node_id = self.node_id, 
-                                                        node_ip = self.node_ip, 
-                                                        handler_callback = self.handle_incoming_message, video=video)
-        
+            self.client = ControlClient(
+                node_id=self.node_id,
+                node_ip=self.node_ip,
+                handler_callback=self.handle_incoming_message,
+                video=video
+            )
         
         # --- Estado da Etapa 2: Rotas ---
         # {video: {src_ip: [( hop_count, is_active), ...]}}
@@ -205,18 +209,55 @@ class Node:
             self.flood_cache.add(key)
 
             if src_ip and src_ip != self.node_ip and video:
+                # ---------- GUARDA APENAS A MELHOR ROTA ----------
+                new_metric = (hop_count, current_latency, True)
+
+                # Se ainda não há rotas para este vídeo → adiciona diretamente
                 if video not in self.routing_table:
-                    self.routing_table[video] = {}
+                    self.routing_table[video] = {
+                        "next_hop": src_ip,
+                        "metric": new_metric
+                    }
+                    print(f"[{self.node_id}] Nova rota para stream {video}: via {src_ip} (hops={hop_count})")
 
-                if src_ip not in self.routing_table[video]:
-                    self.routing_table[video][src_ip] = []
+                else:
+                    old_next = self.routing_table[video]["next_hop"]
+                    old_hops, old_lat, old_active = self.routing_table[video]["metric"]
+                    
+                    new_hops, new_lat, new_active = new_metric
 
-                self.routing_table[video][src_ip].append((hop_count,current_latency ,False))
-                print(f"[{self.node_id}] Nova rota para stream {video}: via {src_ip} (hops={hop_count})")
+                    # Decide se a nova rota é melhor
+                    is_better = (
+                        new_hops < old_hops or
+                        (new_hops == old_hops and new_lat < old_lat)
+                    )
+
+                    if is_better:
+                        self.routing_table[video] = {
+                            "next_hop": src_ip,
+                            "metric": new_metric
+                        }
+                        print(f"[{self.node_id}] Rota MELHOR encontrada para {video}: via {src_ip} (hops={hop_count})")
+
+                    else:
+                        print(f"[{self.node_id}] Rota ignorada (pior que atual) para {video}: via {src_ip} (hops={hop_count})")
+
+                        # --- REATIVAR ROTA ANTIGA ---
+                        if old_active is False:
+                            self.routing_table[video]["metric"] = (old_hops, old_lat, True)
+                            print(f"[{self.node_id}] Rota antiga reativada para {video}: via {old_next}")
+                    
 
         # ------------------ 6. Criar mensagem atualizada ------------------
-        new_msg = Message.create_flood_message(srcip=self.node_ip,origin_flood=origin_ip,flood_id=msg_id,hop_count=hop_count + 1,video=video,start_timestamp=start_ts
+        new_msg = Message.create_flood_message(
+            srcip=self.node_ip,
+            origin_flood=origin_ip,
+            flood_id=msg_id,
+            hop_count=hop_count + 1,
+            video=video,
+            start_timestamp=start_ts
         )
+
 
         # ------------------ 7. Reenviar para vizinhos ------------------
         for neigh, is_active in self.neighbors.items():
@@ -262,49 +303,41 @@ class Node:
                 print(f"[{self.node_id}] Vizinho {dead_ip} marcado como inativo")
 
             # Marcar todas as rotas para este destino como inativas
-            for video in self.routing_table:
-                if dead_ip in self.routing_table[video]:
-                    routes = self.routing_table[video][dead_ip]
-                    for i, (metric, is_active) in enumerate(routes):
-                        if is_active:
-                            self.routing_table[video][dead_ip][i] = (metric, False)
+            for video, data in self.routing_table.items():
+                if data["next_hop"] == dead_ip:
+                    hop, lat, _ = data["metric"]
+                    self.routing_table[video]["metric"] = (hop, lat, False)
+                    print(f"[{self.node_id}] Rota inativada: stream {video}, via {dead_ip}")
 
         # NÃO PROPAGAR LEAVE aos outros vizinhos
 
     def handle_join_message(self, msg):
-        """
-        processa mensagem JOIN recebida
-        """
         new_ip = msg.get_src() if isinstance(msg, Message) else msg.get("srcip")
 
-        # evitar duplicados
         if new_ip in self.join_cache:
             return
-        self.join_cache.add(new_ip)        
-        # se tiver no leave_cache, remover
+        self.join_cache.add(new_ip)
         self.leave_cache.discard(new_ip)
 
         print(f"[{self.node_id}] O vizinho {new_ip} juntou-se à rede.")
 
         with self.lock:
-            # Adicionar ou reativar vizinho
-            if new_ip in self.neighbors:
-                self.neighbors[new_ip] = True
-                print(f"[{self.node_id}] Vizinho {new_ip} reativado")
-            else:
-                self.neighbors[new_ip] = True
-                print(f"[{self.node_id}] Novo vizinho {new_ip} adicionado")
-            
-            # ativar, se tiver, rotas inativas para este nó
-            for video in self.routing_table:
-                if new_ip in self.routing_table[video]:
-                    routes = self.routing_table[video][new_ip]
-                    for i, (metric, is_active) in enumerate(routes):
-                        if not is_active:
-                            self.routing_table[video][new_ip][i] = (metric, True)
+            # 1. Reativar vizinho
+            self.neighbors[new_ip] = True
+            print(f"[{self.node_id}] Vizinho {new_ip} marcado como ativo (JOIN)")
 
-        # NÃO PROPAGAR JOIN aos outros vizinhos
-        
+            # 2. Reset ao heartbeat
+            self.last_alive[new_ip] = time.time()
+            self.fail_count[new_ip] = 0
+
+            # 3. Reativar rota se usa este vizinho
+            for video, data in self.routing_table.items():
+                if data["next_hop"] == new_ip:
+                    hop, lat, _ = data["metric"]
+                    self.routing_table[video]["metric"] = (hop, lat, True)
+                    print(f"[{self.node_id}] Rota reativada por JOIN: {video} via {new_ip}")
+
+
         
     def handle_stream_start(self, msg):
         msg_sender = msg.get_src() if isinstance(msg, Message) else msg.get("srcip")
@@ -322,48 +355,80 @@ class Node:
                 
         else:
             print(f"[{self.node_id}] Pedido de stream START recebido de {msg_sender} para vídeo {msg_video}, mas não sou servidor.")
-            # sends the message to the best neighbor according to the routing table
+
             if msg_video not in self.routing_table:
-                print(f"[{self.node_id}] Nenhuma rota conhecida para o vídeo {video}.")
+                print(f"[{self.node_id}] Nenhuma rota conhecida para o vídeo {msg_video}.")
                 return
-            # get the best neighbor (lowest hop count and active)
-            
-            #TODO: first see if this node already has an active route for that stream, meaning it has the stream passing
-            # TODO: add a connected_neighbours list to then send the stream to all the neighbours that are subscribed
-            # OR: scan the routing table for the stream and send the packets to all routes that are active
-            
-            # IF no active route:
-            
+
             best_neigh = self.find_best_neighbour(msg_video)
-                
+
             if best_neigh:
                 print(f"[{self.node_id}] A reenviar pedido de stream START para {best_neigh} para vídeo {msg_video}.")
-                forward_msg = Message.create_stream_start_message(self.node_ip, msg_video)
+
+                forward_msg = Message.create_stream_start_message(
+                    srcip=self.node_ip,
+                    destip=best_neigh,
+                    video=msg_video
+                )
+
                 self.send_tcp_message(best_neigh, forward_msg)
+
             else:
                 print(f"[{self.node_id}] Nenhum vizinho encontrado para reenviar pedido de stream START para vídeo {msg_video}.")
-                    
+
                
      # a minha ideia é passar esta para o cliente, já que é uma função só, mas era preciso alguma marosca para mandar aquele find_best_neighbour junto     
     def stream_start_handler(self, video):
-            """
-            Envia pedido de stream START para o servidor através da melhor rota.
-            """
-            if video not in self.routing_table:
-                print(f"[{self.node_id}] Nenhuma rota conhecida para o vídeo {video}.")
-                return
+        if video not in self.routing_table:
+            print(f"[{self.node_id}] Nenhuma rota conhecida para o vídeo {video}.")
+            return
 
-            # Encontrar o melhor vizinho (menor métrica)
-            best_neigh = self.find_best_neighbour(video)
+        best_neigh = self.find_best_neighbour(video)
 
-            if best_neigh:
-                print(f"[{self.node_id}] A pedir stream START ao vizinho {best_neigh} para o vídeo {video}.")
-                start_msg = Message.create_stream_start_message(self.node_ip, video)
-                self.client.send_tcp_message(best_neigh, start_msg)
-            else:
-                print(f"[{self.node_id}] Nenhum vizinho ativo encontrado para o vídeo {video}.")
+        if best_neigh:
+            print(f"[{self.node_id}] A pedir stream START ao vizinho {best_neigh} para o vídeo {video}.")
             
-            
+            start_msg = Message.create_stream_start_message(
+                srcip=self.node_ip,
+                destip=best_neigh,
+                video=video
+            )
+
+            # envia através do control client
+            #self.client.send_tcp_message(best_neigh, start_msg)
+            #é o Node que sabe enviar mensagens TCP, não o cliente.
+            self.send_tcp_message(best_neigh, start_msg)
+        else:
+            print(f"[{self.node_id}] Nenhum vizinho ativo encontrado para o vídeo {video}.")
+
+    def start_flood(self):
+        """
+        Inicia um flood a partir deste nó (servidor ou cliente).
+        """
+        # Criar ID único do flood
+        msg_id = str(uuid.uuid4())
+
+        # Guardar na cache (para evitar receber o mesmo flood outra vez)
+        key = (self.node_ip, msg_id)
+        with self.lock:
+            self.flood_cache.add(key)
+
+        # Criar mensagem de flood
+        flood_msg = Message.create_flood_message(
+            srcip=self.node_ip,
+            origin_flood=self.node_ip,
+            flood_id=msg_id,
+            hop_count=0,
+            video=self.video
+        )
+
+        print(f"[{self.node_id}] A iniciar FLOOD com ID {msg_id} para stream {self.video}")
+
+        # Enviar o flood aos vizinhos
+        for neigh_ip in self.neighbors.keys():
+            print(f"[{self.node_id}] Enviando FLOOD para {neigh_ip}")
+            self.send_tcp_message(neigh_ip, flood_msg)
+
         
 
     def local_leave_cleanup(self, dead_ip):
@@ -429,17 +494,19 @@ class Node:
 
                     
     def find_best_neighbour(self, video):
-        """aux function to retrieve the best neighbour"""
+        """Escolhe o vizinho com o menor hop_count para um determinado vídeo."""
         best_neigh = None
-        best_metric = float('inf')
-                
-        for neigh_ip, routes in self.routing_table[video].items():
-            for metric in routes:
-                if metric < best_metric:
-                    best_metric = metric
+        best_metric = 999999
+
+        for neigh_ip, routes in self.routing_table.get(video, {}).items():
+            for (hop_count, latency, is_active) in routes:
+                if hop_count < best_metric:
+                    best_metric = hop_count
                     best_neigh = neigh_ip
-                    
+
         return best_neigh
+
+
 
 
 # ------------------------------------------------------------------
@@ -488,7 +555,7 @@ if __name__ == "__main__":
             
             if cmd == "flood":
                 if node.is_server:
-                    node.server.start_flood()
+                    node.start_flood()
                 else:
                     print("Erro: Apenas o servidor pode iniciar um 'flood'.")
                     

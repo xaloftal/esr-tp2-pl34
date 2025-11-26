@@ -1,5 +1,7 @@
 # Ficheiro: src/Node/control_client.py
 import socket
+import threading
+
 from aux_files.aux_message import Message, MsgType
 from config import NODE_TCP_PORT, NODE_UDP_PORT
 
@@ -19,15 +21,15 @@ class ControlClient():
         
     def start(self):
         # have the listener start, on the handler callback
-        threading.Thread(target=self._run_client, daemon=True).start()
-        
-        
+        #threading.Thread(target=self._run_client, daemon=True).start()
+        pass
+    
     def _run_client(self):
         try:
             # for tcp, use the handler callback to process messages
-            self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.client_socket.bind((self.node_ip, self.TCPport))
-            self.client_socket.listen()
+            #self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            #self.client_socket.bind((self.node_ip, self.TCPport))
+            #self.client_socket.listen()
             print(f"[Cliente] A escutar em {self.node_ip}:{self.TCPport}")
             
             while True:
@@ -37,8 +39,7 @@ class ControlClient():
         except Exception as e:
             print(f"[Cliente] Erro fatal no cliente: {e}")
             if self.client_socket:
-                self.client_socket.close()
-                
+                self.client_socket.close() 
                 
                 
     def _handle_connection(self, conn, addr):

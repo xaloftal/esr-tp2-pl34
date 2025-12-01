@@ -11,7 +11,7 @@ import socket
 from control_server import ControlServer
 from control_client import ControlClient
 # Importa a porta TCP partilhada
-from config import NODE_TCP_PORT, BOOTSTRAPPER_PORT, NODE_UDP_PORT
+from config import NODE_TCP_PORT, BOOTSTRAPPER_PORT, NODE_RTP_PORT
 # Import Message class
 from aux_files.aux_message import Message, MsgType
 
@@ -22,7 +22,7 @@ class Node:
     define a lógica de processamento de mensagens.
     """
     
-    def __init__(self, node_id, node_ip, bootstrapper_ip,  is_server=False, video=None, is_client=False):
+    def __init__(self, node_id, node_ip, bootstrapper_ip,  is_server=False, video=None):
         
         self.node_id = node_id
         self.node_ip = node_ip
@@ -34,20 +34,17 @@ class Node:
         self.network_ready = False
         self.bootstrapper_ip = bootstrapper_ip
         self.video = video
- 
+         
         # --- Flag de Servidor ---
         self.is_server = is_server        
-        self.is_client = is_client
         
         
         print(f"[{self.node_id}] Tipo: {'Servidor de Stream' if self.is_server else 'Cliente' if self.is_client else 'Nó Intermédio'}")
         
         # --- Estado da Etapa 1: Topologia Overlay ---
         self.neighbors = {}  # {ip: is_active}
-        neighbor_list = self.register_with_bootstrapper(self.node_ip)
-        
-        for neigh in neighbor_list:
-            self.neighbors[neigh] = True  # All neighbors start inactive
+        self.register_and_join(self.node_ip)
+
         
         # TODOS OS NODES TÊM CONTROL SERVER
         self.server = ControlServer(
@@ -55,21 +52,11 @@ class Node:
             handler_callback=self.handle_incoming_message,
             video=video
         )
-
-        # Se também for client → cria o control client interno
-        if self.is_client:
-            self.client = ControlClient(
-                node_id=self.node_id,
-                node_ip=self.node_ip,
-                handler_callback=self.handle_incoming_message,
-                video=video
-            )
         
         # --- Estado da Etapa 2: Rotas ---
-        # {video: {src_ip: [( hop_count, is_active), ...]}}
+        # {video: {neighbour_ip: [( hop_count, is_active), ...]}}
         self.routing_table = {} 
         self.flood_cache = set() # Evita loops de flood
-        
         self.lock = threading.Lock() 
         
         
@@ -85,10 +72,8 @@ class Node:
         
         print(f"[{self.node_id}] Nó iniciado. Vizinhos: {self.neighbors}")
         
-        
-        
-        
-    def register_with_bootstrapper(self, node_ip):
+    
+    def register_and_join(self, node_ip):
         """
         ETAPA 1: Regista o nó no bootstrapper e obtém a lista de vizinhos.
         """
@@ -115,8 +100,21 @@ class Node:
             neighbors = data.get_payload().get("neighbours", [])
             
             print(f"[Cliente] Vizinhos recebidos do bootstrapper: {neighbors}")
-            return neighbors
-        
+            
+            
+            #
+            #   Send join to know if neighbours are active or not
+            #
+            
+            for neigh in neighbors:
+                join_msg = Message.create_join_message(node_ip, neigh)
+
+                active = self.send_tcp_message(neigh, join_msg)
+                
+                # if there's a connection, add the neighbour with True
+                self.neighbors[neigh] = True if active else False
+                       
+                
         except json.JSONDecodeError:
             print(f"[Cliente] Falha a parsear resposta do bootstrapper: {response_raw}")
             return []
@@ -312,30 +310,30 @@ class Node:
         # NÃO PROPAGAR LEAVE aos outros vizinhos
 
     def handle_join_message(self, msg):
-        new_ip = msg.get_src() if isinstance(msg, Message) else msg.get("srcip")
+        neigh_ip = msg.get_src() if isinstance(msg, Message) else msg.get("srcip")
 
-        if new_ip in self.join_cache:
+        if neigh_ip in self.join_cache:
             return
-        self.join_cache.add(new_ip)
-        self.leave_cache.discard(new_ip)
+        self.join_cache.add(neigh_ip)
+        self.leave_cache.discard(neigh_ip)
 
-        print(f"[{self.node_id}] O vizinho {new_ip} juntou-se à rede.")
+        print(f"[{self.node_id}] O vizinho {neigh_ip} juntou-se à rede.")
 
         with self.lock:
             # 1. Reativar vizinho
-            self.neighbors[new_ip] = True
-            print(f"[{self.node_id}] Vizinho {new_ip} marcado como ativo (JOIN)")
+            self.neighbors[neigh_ip] = True
+            print(f"[{self.node_id}] Vizinho {neigh_ip} marcado como ativo (JOIN)")
 
             # 2. Reset ao heartbeat
-            self.last_alive[new_ip] = time.time()
-            self.fail_count[new_ip] = 0
+            self.last_alive[neigh_ip] = time.time()
+            self.fail_count[neigh_ip] = 0
 
-            # 3. Reativar rota se usa este vizinho
+            # 3. Havendo uma rota ativa, verificar se o vizinho novo é melhor
             for video, data in self.routing_table.items():
-                if data["next_hop"] == new_ip:
+                if data["next_hop"] == neigh_ip:
                     hop, lat, _ = data["metric"]
                     self.routing_table[video]["metric"] = (hop, lat, True)
-                    print(f"[{self.node_id}] Rota reativada por JOIN: {video} via {new_ip}")
+                    print(f"[{self.node_id}] Rota reativada por JOIN: {video} via {neigh_ip}")
 
 
         
@@ -360,7 +358,7 @@ class Node:
                 print(f"[{self.node_id}] Nenhuma rota conhecida para o vídeo {msg_video}.")
                 return
 
-            best_neigh = self.find_best_neighbour(msg_video)
+            best_neigh = self.find_best_active_neighbour(msg_video)
 
             if best_neigh:
                 print(f"[{self.node_id}] A reenviar pedido de stream START para {best_neigh} para vídeo {msg_video}.")
@@ -383,7 +381,7 @@ class Node:
             print(f"[{self.node_id}] Nenhuma rota conhecida para o vídeo {video}.")
             return
 
-        best_neigh = self.find_best_neighbour(video)
+        best_neigh = self.find_best_active_neighbour(video)
 
         if best_neigh:
             print(f"[{self.node_id}] A pedir stream START ao vizinho {best_neigh} para o vídeo {video}.")
@@ -493,16 +491,18 @@ class Node:
 
 
                     
-    def find_best_neighbour(self, video):
+    def find_best_active_neighbour(self, video):
         """Escolhe o vizinho com o menor hop_count para um determinado vídeo."""
         best_neigh = None
-        best_metric = 999999
-
+        best_metric = 999999999
+                
         for neigh_ip, routes in self.routing_table.get(video, {}).items():
-            for (hop_count, latency, is_active) in routes:
-                if hop_count < best_metric:
-                    best_metric = hop_count
-                    best_neigh = neigh_ip
+            # only if neigh is active
+            if self.neighbors.get(neigh_ip, True):
+                for (hop_count, latency, is_active) in routes:
+                    if hop_count < best_metric:
+                        best_metric = hop_count
+                        best_neigh = neigh_ip
 
         return best_neigh
 
@@ -514,11 +514,9 @@ class Node:
 # ------------------------------------------------------------------
 if __name__ == "__main__":
     if len(sys.argv) < 4: 
-        print("Uso: python3 node.py NODE_ID NODE_IP BOOTSTRAPPER_IP [--server || --client] VIDEO  ")
+        print("Uso: python3 node.py NODE_ID NODE_IP BOOTSTRAPPER_IP [--server] VIDEO  ")
         print("\nExemplo Servidor:")
         print("  python3 node.py streamer 10.0.0.20 10.0.20.20 --server video1.Mjpeg")
-        print("\nExemplo Cliente:")
-        print("  python3 node.py c2 10.0.0.21 10.0.20.20 --client video1.Mjpeg")
         sys.exit(1)
 
     node_id = sys.argv[1]
@@ -528,13 +526,9 @@ if __name__ == "__main__":
 
     
     is_server_flag = "--server" in sys.argv    
-    is_client_flag = "--client" in sys.argv
     
-    if is_server_flag and is_client_flag:
-        print("Erro: Um nó não pode ser simultaneamente servidor e cliente.")
-        sys.exit(1)
     
-    node = Node(node_id, node_ip, boot_ip, is_server=is_server_flag, is_client=is_client_flag, video=video)
+    node = Node(node_id, node_ip, boot_ip, is_server=is_server_flag, video=video)
 
     # 2. Iniciar serviços (Etapa 1: Registar e Escutar)
     node.start()
@@ -544,8 +538,6 @@ if __name__ == "__main__":
     # 3. Loop de comandos interativos
     if node.is_server:
         prompt_text = f"[{node.node_id}] (Servidor) Comando (flood / routes / neigh / exit): "
-    elif node.is_client:
-        prompt_text = f"[{node.node_id}] (Cliente)  Comando (routes / neigh / start_video / leave / exit): "
     else:
         prompt_text = f"[{node.node_id}] (Nó)  Comando (routes / neigh / leave / exit): "
 

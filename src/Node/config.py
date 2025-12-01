@@ -17,4 +17,4 @@ BOOTSTRAPPER_PORT = 5000 # Porta do bootstrapper
 # Porta TCP onde CADA nó vai escutar por msgs de controlo (FLOOD, etc.)
 NODE_TCP_PORT = 6000
 
-NODE_UDP_PORT = 7000 
+NODE_RTP_PORT = 7000 

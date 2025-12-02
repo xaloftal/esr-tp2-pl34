@@ -78,6 +78,7 @@ class ClienteGUI:
 		threading.Thread(target=self.listenRtp).start()
 		self.playEvent = threading.Event()
 		self.playEvent.clear()
+
 	
 	def listenRtp(self):		
 		"""Listen for RTP packets."""
@@ -142,3 +143,5 @@ class ClienteGUI:
 			self.exitClient()
 		else: # When the user presses cancel, resume playing.
 			self.playMovie()
+
+

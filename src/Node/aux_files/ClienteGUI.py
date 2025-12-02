@@ -3,7 +3,7 @@ import tkinter.messagebox as tkMessageBox
 from PIL import Image, ImageTk
 import socket, threading, sys, traceback, os
 
-from RtpPacket import RtpPacket
+from aux_files.RtpPacket import RtpPacket
 
 CACHE_FILE_NAME = "cache-"
 CACHE_FILE_EXT = ".jpg"
@@ -21,13 +21,13 @@ class ClienteGUI:
 		self.sessionId = 0
 		self.requestSent = -1
 		self.teardownAcked = 0
+		self.frameNbr = 0
 		self.createWidgets()
 		self.openRtpPort()
-		self.playMovie()
-		self.frameNbr = 0
+		# Don't call playMovie here - let user click Play button
+		# self.playMovie()
   
-		for neighbor in client.neighbors:
-			self.neihbours[neighbor] = False
+  
 		
 	def createWidgets(self):
 		"""Build GUI."""

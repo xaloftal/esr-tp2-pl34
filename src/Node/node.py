@@ -11,7 +11,7 @@ import socket
 from control_server import ControlServer
 from control_client import ControlClient
 # Importa a porta TCP partilhada
-from config import NODE_TCP_PORT, BOOTSTRAPPER_PORT, NODE_UDP_PORT
+from config import NODE_TCP_PORT, BOOTSTRAPPER_PORT, NODE_RTP_PORT, HEARTBEAT_INTERVAL, FAIL_TIMEOUT, MAX_FAILS
 # Import Message class
 from aux_files.aux_message import Message, MsgType
 
@@ -22,7 +22,7 @@ class Node:
     define a lógica de processamento de mensagens.
     """
     
-    def __init__(self, node_id, node_ip, bootstrapper_ip,  is_server=False, video=None, is_client=False):
+    def __init__(self, node_id, node_ip, bootstrapper_ip,  is_server=False, video=None):
         
         self.node_id = node_id
         self.node_ip = node_ip
@@ -34,20 +34,17 @@ class Node:
         self.network_ready = False
         self.bootstrapper_ip = bootstrapper_ip
         self.video = video
- 
+         
         # --- Flag de Servidor ---
         self.is_server = is_server        
-        self.is_client = is_client
         
         
-        print(f"[{self.node_id}] Tipo: {'Servidor de Stream' if self.is_server else 'Cliente' if self.is_client else 'Nó Intermédio'}")
+        print(f"[{self.node_id}] Tipo: {'Servidor de Stream' if self.is_server else 'Nó Intermédio'}")
         
         # --- Estado da Etapa 1: Topologia Overlay ---
         self.neighbors = {}  # {ip: is_active}
-        neighbor_list = self.register_with_bootstrapper(self.node_ip)
-        
-        for neigh in neighbor_list:
-            self.neighbors[neigh] = True  # All neighbors start inactive
+        self.register_and_join(self.node_ip)
+
         
         # TODOS OS NODES TÊM CONTROL SERVER
         self.server = ControlServer(
@@ -55,21 +52,11 @@ class Node:
             handler_callback=self.handle_incoming_message,
             video=video
         )
-
-        # Se também for client → cria o control client interno
-        if self.is_client:
-            self.client = ControlClient(
-                node_id=self.node_id,
-                node_ip=self.node_ip,
-                handler_callback=self.handle_incoming_message,
-                video=video
-            )
         
         # --- Estado da Etapa 2: Rotas ---
-        # {video: {src_ip: [( hop_count, is_active), ...]}}
+        # {video: [{"next_hop": ip, "metric": (hop_count, latency_ms), "is_active": bool}, ...]}
         self.routing_table = {} 
         self.flood_cache = set() # Evita loops de flood
-        
         self.lock = threading.Lock() 
         
         
@@ -85,10 +72,8 @@ class Node:
         
         print(f"[{self.node_id}] Nó iniciado. Vizinhos: {self.neighbors}")
         
-        
-        
-        
-    def register_with_bootstrapper(self, node_ip):
+    
+    def register_and_join(self, node_ip):
         """
         ETAPA 1: Regista o nó no bootstrapper e obtém a lista de vizinhos.
         """
@@ -115,8 +100,21 @@ class Node:
             neighbors = data.get_payload().get("neighbours", [])
             
             print(f"[Cliente] Vizinhos recebidos do bootstrapper: {neighbors}")
-            return neighbors
-        
+            
+            
+            #
+            #   Send join to know if neighbours are active or not
+            #
+            
+            for neigh in neighbors:
+                join_msg = Message.create_join_message(node_ip, neigh)
+
+                active = self.send_tcp_message(neigh, join_msg)
+                
+                # if there's a connection, add the neighbour with True
+                self.neighbors[neigh] = True if active else False
+                       
+                
         except json.JSONDecodeError:
             print(f"[Cliente] Falha a parsear resposta do bootstrapper: {response_raw}")
             return []
@@ -209,43 +207,44 @@ class Node:
             self.flood_cache.add(key)
 
             if src_ip and src_ip != self.node_ip and video:
-                # ---------- GUARDA APENAS A MELHOR ROTA ----------
-                new_metric = (hop_count, current_latency, True)
+                # Estrutura: {video: [{"next_hop": ip, "metric": (hop, lat), "is_active": bool}, ...]}
+                new_route = {
+                    "next_hop": src_ip,
+                    "metric": (hop_count, current_latency),
+                    "is_active": False
+                }
 
-                # Se ainda não há rotas para este vídeo → adiciona diretamente
+                # Se ainda não há rotas para este vídeo → cria lista
                 if video not in self.routing_table:
-                    self.routing_table[video] = {
-                        "next_hop": src_ip,
-                        "metric": new_metric
-                    }
+                    self.routing_table[video] = [new_route]
                     print(f"[{self.node_id}] Nova rota para stream {video}: via {src_ip} (hops={hop_count})")
 
                 else:
-                    old_next = self.routing_table[video]["next_hop"]
-                    old_hops, old_lat, old_active = self.routing_table[video]["metric"]
-                    
-                    new_hops, new_lat, new_active = new_metric
+                    # Verificar se já temos rota por este next_hop
+                    existing_route = None
+                    for route in self.routing_table[video]:
+                        if route["next_hop"] == src_ip:
+                            existing_route = route
+                            break
 
-                    # Decide se a nova rota é melhor
-                    is_better = (
-                        new_hops < old_hops or
-                        (new_hops == old_hops and new_lat < old_lat)
-                    )
-
-                    if is_better:
-                        self.routing_table[video] = {
-                            "next_hop": src_ip,
-                            "metric": new_metric
-                        }
-                        print(f"[{self.node_id}] Rota MELHOR encontrada para {video}: via {src_ip} (hops={hop_count})")
-
+                    if existing_route:
+                        # Atualizar rota existente se a nova for melhor
+                        old_hop, old_lat = existing_route["metric"]
+                        new_hop, new_lat = new_route["metric"]
+                        
+                        if new_hop < old_hop or (new_hop == old_hop and new_lat < old_lat):
+                            existing_route["metric"] = (new_hop, new_lat)
+                            existing_route["is_active"] = True
+                            print(f"[{self.node_id}] Rota MELHORADA para {video}: via {src_ip} (hops={hop_count})")
+                        else:
+                            # Reativar rota antiga se estava inativa
+                            if not existing_route["is_active"]:
+                                existing_route["is_active"] = True
+                                print(f"[{self.node_id}] Rota reativada para {video}: via {src_ip}")
                     else:
-                        print(f"[{self.node_id}] Rota ignorada (pior que atual) para {video}: via {src_ip} (hops={hop_count})")
-
-                        # --- REATIVAR ROTA ANTIGA ---
-                        if old_active is False:
-                            self.routing_table[video]["metric"] = (old_hops, old_lat, True)
-                            print(f"[{self.node_id}] Rota antiga reativada para {video}: via {old_next}")
+                        # Adicionar nova rota à lista
+                        self.routing_table[video].append(new_route)
+                        print(f"[{self.node_id}] Nova rota alternativa para {video}: via {src_ip} (hops={hop_count})")
                     
 
         # ------------------ 6. Criar mensagem atualizada ------------------
@@ -301,41 +300,43 @@ class Node:
             if dead_ip in self.neighbors:
                 self.neighbors[dead_ip] = False
                 print(f"[{self.node_id}] Vizinho {dead_ip} marcado como inativo")
+                self.join_cache.discard(dead_ip)
+                self.leave_cache.add(dead_ip)
 
-            # Marcar todas as rotas para este destino como inativas
-            for video, data in self.routing_table.items():
-                if data["next_hop"] == dead_ip:
-                    hop, lat, _ = data["metric"]
-                    self.routing_table[video]["metric"] = (hop, lat, False)
-                    print(f"[{self.node_id}] Rota inativada: stream {video}, via {dead_ip}")
+            # Marcar todas as rotas que usam este next_hop como inativas
+            for video, routes in self.routing_table.items():
+                for route in routes:
+                    if route["next_hop"] == dead_ip:
+                        route["is_active"] = False
+                        print(f"[{self.node_id}] Rota inativada: stream {video}, via {dead_ip}")
 
         # NÃO PROPAGAR LEAVE aos outros vizinhos
 
     def handle_join_message(self, msg):
-        new_ip = msg.get_src() if isinstance(msg, Message) else msg.get("srcip")
+        neigh_ip = msg.get_src() if isinstance(msg, Message) else msg.get("srcip")
 
-        if new_ip in self.join_cache:
+        if neigh_ip in self.join_cache:
             return
-        self.join_cache.add(new_ip)
-        self.leave_cache.discard(new_ip)
+        self.join_cache.add(neigh_ip)
+        self.leave_cache.discard(neigh_ip)
 
-        print(f"[{self.node_id}] O vizinho {new_ip} juntou-se à rede.")
+        print(f"[{self.node_id}] O vizinho {neigh_ip} juntou-se à rede.")
 
         with self.lock:
             # 1. Reativar vizinho
-            self.neighbors[new_ip] = True
-            print(f"[{self.node_id}] Vizinho {new_ip} marcado como ativo (JOIN)")
+            self.neighbors[neigh_ip] = True
+            print(f"[{self.node_id}] Vizinho {neigh_ip} marcado como ativo (JOIN)")
 
             # 2. Reset ao heartbeat
-            self.last_alive[new_ip] = time.time()
-            self.fail_count[new_ip] = 0
+            self.last_alive[neigh_ip] = time.time()
+            self.fail_count[neigh_ip] = 0
 
-            # 3. Reativar rota se usa este vizinho
-            for video, data in self.routing_table.items():
-                if data["next_hop"] == new_ip:
-                    hop, lat, _ = data["metric"]
-                    self.routing_table[video]["metric"] = (hop, lat, True)
-                    print(f"[{self.node_id}] Rota reativada por JOIN: {video} via {new_ip}")
+            # 3. Reativar rotas que usam este next_hop
+            for video, routes in self.routing_table.items():
+                for route in routes:
+                    if route["next_hop"] == neigh_ip:
+                        route["is_active"] = True
+                        print(f"[{self.node_id}] Rota reativada por JOIN: {video} via {neigh_ip}")
 
 
         
@@ -360,7 +361,7 @@ class Node:
                 print(f"[{self.node_id}] Nenhuma rota conhecida para o vídeo {msg_video}.")
                 return
 
-            best_neigh = self.find_best_neighbour(msg_video)
+            best_neigh = self.find_best_active_neighbour(msg_video)
 
             if best_neigh:
                 print(f"[{self.node_id}] A reenviar pedido de stream START para {best_neigh} para vídeo {msg_video}.")
@@ -383,7 +384,7 @@ class Node:
             print(f"[{self.node_id}] Nenhuma rota conhecida para o vídeo {video}.")
             return
 
-        best_neigh = self.find_best_neighbour(video)
+        best_neigh = self.find_best_active_neighbour(video)
 
         if best_neigh:
             print(f"[{self.node_id}] A pedir stream START ao vizinho {best_neigh} para o vídeo {video}.")
@@ -437,31 +438,25 @@ class Node:
         """
         with self.lock:
             # Marcar vizinho como inativo
+            
+             # remove da join_cache se lá estiver
+            self.join_cache.discard(dead_ip)
+                # adiciona à leave_cache
+            self.leave_cache.add(dead_ip)
             if dead_ip in self.neighbors:
                 self.neighbors[dead_ip] = False
                 print(f"[{self.node_id}] Vizinho {dead_ip} marcado como inativo (timeout)")
             
-           # Marcar todas as rotas para este destino como inativas
-            for video in self.routing_table:
-                if dead_ip in self.routing_table[video]:
-                    routes = self.routing_table[video][dead_ip]
-                    for i, (metric, is_active) in enumerate(routes):
-                        if is_active:
-                            # Marcar como inativa em vez de remover
-                            self.routing_table[video][dead_ip][i] = (metric, False)
-                            print(f"[{self.node_id}] Rota inativada: stream {video}, destino {dead_ip}")
+            # Marcar todas as rotas que usam este next_hop como inativas
+            for video, routes in self.routing_table.items():
+                for route in routes:
+                    if route["next_hop"] == dead_ip:
+                        route["is_active"] = False
+                        print(f"[{self.node_id}] Rota inativada: stream {video}, via {dead_ip}")
 
 
 
-    
     def heartbeat(self):
-        while not self.network_ready:
-            time.sleep(1)
-
-        HEARTBEAT_INTERVAL = 5      # de quanto em quanto tempo enviamos ALIVE
-        FAIL_TIMEOUT = 10           # se 10 segundos sem ESTOU_AQUI → suspeito
-        MAX_FAILS = 3              # falha repetida 3 vezes → morto
-
         while True:
             time.sleep(HEARTBEAT_INTERVAL)
             now = time.time()
@@ -493,18 +488,27 @@ class Node:
 
 
                     
-    def find_best_neighbour(self, video):
-        """Escolhe o vizinho com o menor hop_count para um determinado vídeo."""
-        best_neigh = None
-        best_metric = 999999
-
-        for neigh_ip, routes in self.routing_table.get(video, {}).items():
-            for (hop_count, latency, is_active) in routes:
-                if hop_count < best_metric:
-                    best_metric = hop_count
-                    best_neigh = neigh_ip
-
-        return best_neigh
+    def find_best_active_neighbour(self, video):
+        """Escolhe o vizinho ativo com a melhor métrica para um determinado vídeo."""
+        if video not in self.routing_table:
+            return None
+        
+        best_route = None
+        best_metric = (999999, 999999999)  # (hop_count, latency)
+        
+        for route in self.routing_table[video]:
+            next_hop = route["next_hop"]
+            hop_count, latency = route["metric"]
+            is_active = route["is_active"]
+            
+            # Apenas rotas ativas e com vizinho ativo
+            if is_active and self.neighbors.get(next_hop, False):
+                # Comparar métricas (hop_count primeiro, depois latency)
+                if (hop_count < best_metric[0]) or (hop_count == best_metric[0] and latency < best_metric[1]):
+                    best_metric = (hop_count, latency)
+                    best_route = next_hop
+        
+        return best_route
 
 
 
@@ -514,11 +518,9 @@ class Node:
 # ------------------------------------------------------------------
 if __name__ == "__main__":
     if len(sys.argv) < 4: 
-        print("Uso: python3 node.py NODE_ID NODE_IP BOOTSTRAPPER_IP [--server || --client] VIDEO  ")
+        print("Uso: python3 node.py NODE_ID NODE_IP BOOTSTRAPPER_IP [--server] VIDEO  ")
         print("\nExemplo Servidor:")
         print("  python3 node.py streamer 10.0.0.20 10.0.20.20 --server video1.Mjpeg")
-        print("\nExemplo Cliente:")
-        print("  python3 node.py c2 10.0.0.21 10.0.20.20 --client video1.Mjpeg")
         sys.exit(1)
 
     node_id = sys.argv[1]
@@ -528,13 +530,9 @@ if __name__ == "__main__":
 
     
     is_server_flag = "--server" in sys.argv    
-    is_client_flag = "--client" in sys.argv
     
-    if is_server_flag and is_client_flag:
-        print("Erro: Um nó não pode ser simultaneamente servidor e cliente.")
-        sys.exit(1)
     
-    node = Node(node_id, node_ip, boot_ip, is_server=is_server_flag, is_client=is_client_flag, video=video)
+    node = Node(node_id, node_ip, boot_ip, is_server=is_server_flag, video=video)
 
     # 2. Iniciar serviços (Etapa 1: Registar e Escutar)
     node.start()
@@ -543,11 +541,9 @@ if __name__ == "__main__":
 
     # 3. Loop de comandos interativos
     if node.is_server:
-        prompt_text = f"[{node.node_id}] (Servidor) Comando (flood / routes / neigh / exit): "
-    elif node.is_client:
-        prompt_text = f"[{node.node_id}] (Cliente)  Comando (routes / neigh / start_video / leave / exit): "
+        prompt_text = f"[{node.node_id}] (Servidor) Comando (flood / routes / neigh / exit): \n"
     else:
-        prompt_text = f"[{node.node_id}] (Nó)  Comando (routes / neigh / leave / exit): "
+        prompt_text = f"[{node.node_id}] (Nó)  Comando (routes / neigh / leave / exit): \n "
 
     while True:
         try:
@@ -560,7 +556,7 @@ if __name__ == "__main__":
                     print("Erro: Apenas o servidor pode iniciar um 'flood'.")
                     
             elif cmd == "routes":
-                print(f"[{node.node_id}] Tabela de Rotas (video: [source_ip: ( Métrica, Latência,is_active))]:")
+                print(f"[{node.node_id}] Tabela de Rotas (video: [{{\"next_hop\": ip, \"metric\": (hop_count, latency_ms), \"is_active\": bool}}, ...]):")
                 print(node.routing_table)
 
             elif cmd == "neigh":
@@ -574,11 +570,6 @@ if __name__ == "__main__":
                 node.announce_leave()
                 print(f"[{node.node_id}] LEAVE enviado. A terminar...")
                 break
-            
-            elif cmd == "start_video":
-                # if is client and the route table is not empty
-                if node.is_client and node.routing_table:
-                    node.stream_start_handler(video=node.client.video)
             
             elif cmd == "":
                 print(prompt_text)

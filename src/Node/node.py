@@ -11,7 +11,7 @@ import socket
 from control_server import ControlServer
 from control_client import ControlClient
 # Importa a porta TCP partilhada
-from config import NODE_TCP_PORT, BOOTSTRAPPER_PORT, NODE_RTP_PORT
+from config import NODE_TCP_PORT, BOOTSTRAPPER_PORT, NODE_RTP_PORT, HEARTBEAT_INTERVAL, FAIL_TIMEOUT, MAX_FAILS
 # Import Message class
 from aux_files.aux_message import Message, MsgType
 
@@ -438,6 +438,11 @@ class Node:
         """
         with self.lock:
             # Marcar vizinho como inativo
+            
+             # remove da join_cache se lá estiver
+            self.join_cache.discard(dead_ip)
+                # adiciona à leave_cache
+            self.leave_cache.add(dead_ip)
             if dead_ip in self.neighbors:
                 self.neighbors[dead_ip] = False
                 print(f"[{self.node_id}] Vizinho {dead_ip} marcado como inativo (timeout)")
@@ -451,15 +456,7 @@ class Node:
 
 
 
-    
     def heartbeat(self):
-        while not self.network_ready:
-            time.sleep(1)
-
-        HEARTBEAT_INTERVAL = 5      # de quanto em quanto tempo enviamos ALIVE
-        FAIL_TIMEOUT = 10           # se 10 segundos sem ESTOU_AQUI → suspeito
-        MAX_FAILS = 3              # falha repetida 3 vezes → morto
-
         while True:
             time.sleep(HEARTBEAT_INTERVAL)
             now = time.time()

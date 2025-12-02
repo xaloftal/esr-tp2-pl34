@@ -3,11 +3,12 @@ import json
 import socket
 import threading
 import sys
+import time
 from tkinter import Tk
 from aux_files.ClienteGUI import ClienteGUI
 
 from aux_files.aux_message import Message, MsgType
-from config import NODE_TCP_PORT, NODE_RTP_PORT,  BOOTSTRAPPER_PORT
+from config import NODE_TCP_PORT, NODE_RTP_PORT,  BOOTSTRAPPER_PORT, HEARTBEAT_INTERVAL
 
 
 class ControlClient():
@@ -143,6 +144,19 @@ class ControlClient():
             print(f"[Cliente] Recebido LEAVE de {sender_ip}")
             if sender_ip in self.neighbors:
                 self.neighbors[sender_ip] = False
+    
+    
+    def heartbeat(self):
+        """Envia mensagens ALIVE para os vizinhos """
+        while True:
+            time.sleep(HEARTBEAT_INTERVAL)
+
+            for neigh, is_active in list(self.neighbors.items()):
+                # Apenas enviar ALIVE para vizinhos ativos
+                if is_active:
+                    alive_msg = Message.create_alive_message(self.node_ip, neigh)
+                    self.send_tcp_message(neigh, alive_msg)
+                    # Cliente não espera resposta, só envia para manter-se "vivo"
         
 
 if __name__ == "__main__":    
@@ -157,6 +171,10 @@ if __name__ == "__main__":
     
     # Criar ControlClient wrapper
     client = ControlClient(node_id, node_ip, boot_ip, video)
+    
+    # Iniciar heartbeat em background
+    heartbeat_thread = threading.Thread(target=client.heartbeat, daemon=True)
+    heartbeat_thread.start()
     
     # Criar GUI
     root = Tk()

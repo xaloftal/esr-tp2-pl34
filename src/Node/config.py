@@ -18,3 +18,8 @@ BOOTSTRAPPER_PORT = 5000 # Porta do bootstrapper
 NODE_TCP_PORT = 6000
 
 NODE_RTP_PORT = 7000 
+
+
+HEARTBEAT_INTERVAL = 5      # de quanto em quanto tempo enviamos ALIVE
+FAIL_TIMEOUT = 10           # se 10 segundos sem ESTOU_AQUI → suspeito
+MAX_FAILS = 3     

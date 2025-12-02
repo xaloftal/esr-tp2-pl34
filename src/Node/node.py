@@ -337,7 +337,6 @@ class Node:
         msg_video = msg_payload.get("video", None)
         
         if self.is_server:
-            # check if it has video on server.video, which is an array
             if msg_video in self.server.video:
                 print(f"[{self.node_id}] Pedido de stream {msg_video} recebido de {msg_sender}. A iniciar envio...")
                 self.server.start_stream_to_client(msg_sender, msg_video)

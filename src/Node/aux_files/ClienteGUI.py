@@ -5,7 +5,6 @@ import socket, threading, sys, traceback, os
 from Node import send_tcp_message
 
 from aux_files.RtpPacket import RtpPacket
-from aux_files.aux_message import Message
 
 CACHE_FILE_NAME = "cache-"
 CACHE_FILE_EXT = ".jpg"

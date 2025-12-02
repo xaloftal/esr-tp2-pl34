@@ -1,7 +1,7 @@
 # control_server.py
 import socket
 import threading
-from config import NODE_TCP_PORT, NODE_UDP_PORT
+from config import NODE_TCP_PORT, NODE_RTP_PORT
 from aux_files.aux_message import Message
 from aux_files.RtpServer import RtpServer   
 
@@ -9,7 +9,7 @@ class ControlServer:
     def __init__(self, host_ip, handler_callback, video=None):
         self.host_ip = host_ip
         self.TCPport = NODE_TCP_PORT
-        self.UDPport = NODE_UDP_PORT
+        self.UDPport = NODE_RTP_PORT
         self.handler_callback = handler_callback
         self.video = video      # pode ser string ou dict
         self.server_socket = None
@@ -48,7 +48,6 @@ class ControlServer:
             conn.close()
 
     # SERVIDOR RTP – enviar vídeo para cliente
-
     def start_stream_to_client(self, client_ip, video_name):
         print(f"[Servidor] Preparar envio RTP de {video_name} para {client_ip}")
 

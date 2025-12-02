@@ -161,7 +161,7 @@ class Node:
             with self.lock:
                 self.last_alive[msg_sender] = time.time()
                 self.fail_count[msg_sender] = 0
-            print(f"[{self.node_id}] {msg_sender} está vivo")
+            #print(f"[{self.node_id}] {msg_sender} está vivo")
         
         elif msg_type == MsgType.LEAVE:
             self.handle_leave_message(msg)
@@ -182,7 +182,9 @@ class Node:
     # ------------------------------------------------------------------
     def handle_flood_message(self, msg):
         """
-            flood
+        Processa mensagens de FLOOD.
+        1. Atualiza tabela de rotas (sempre).
+        2. Decide se reenvia (apenas se for novo).
         """
         src_ip = msg.get_src() if isinstance(msg, Message) else msg.get("srcip")
         msg_id = msg.id if isinstance(msg, Message) else msg.get("msg_id")
@@ -192,60 +194,51 @@ class Node:
         video = payload.get("video", None)
         start_ts = payload.get("start_timestamp", time.time())
         current_latency = (time.time() - start_ts) * 1000
-
-        # ------------------- 2. Identificação do originador -------------------
+        
         origin_ip = payload.get("origin_ip", src_ip)
 
-        # A chave de flood deve ser baseada no originador (constante), não no vizinho atual
-        key = (origin_ip, msg_id)
 
-        with self.lock:
-            if key in self.flood_cache:
-                return
-
-            # ------------------ 4. Registar flood ------------------
-            self.flood_cache.add(key)
-
-            if src_ip and src_ip != self.node_ip and video:
-                # Estrutura: {video: [{"next_hop": ip, "metric": (hop, lat), "is_active": bool}, ...]}
+        if src_ip != self.node_ip and video:
+            with self.lock: 
                 new_route = {
                     "next_hop": src_ip,
                     "metric": (hop_count, current_latency),
                     "is_active": False
                 }
 
-                # Se ainda não há rotas para este vídeo → cria lista
                 if video not in self.routing_table:
                     self.routing_table[video] = [new_route]
-                    print(f"[{self.node_id}] Nova rota para stream {video}: via {src_ip} (hops={hop_count})")
-
+                    print(f"[{self.node_id}] Nova rota stream {video}: via {src_ip}")
                 else:
-                    # Verificar se já temos rota por este next_hop
                     existing_route = None
                     for route in self.routing_table[video]:
                         if route["next_hop"] == src_ip:
                             existing_route = route
                             break
-
+                    
                     if existing_route:
-                        # Atualizar rota existente se a nova for melhor
+                        # Atualiza métricas do vizinho existente
                         old_hop, old_lat = existing_route["metric"]
                         new_hop, new_lat = new_route["metric"]
                         
                         if new_hop < old_hop or (new_hop == old_hop and new_lat < old_lat):
                             existing_route["metric"] = (new_hop, new_lat)
                             existing_route["is_active"] = True
-                            print(f"[{self.node_id}] Rota MELHORADA para {video}: via {src_ip} (hops={hop_count})")
-                        else:
-                            # Reativar rota antiga se estava inativa
-                            if not existing_route["is_active"]:
-                                existing_route["is_active"] = True
-                                print(f"[{self.node_id}] Rota reativada para {video}: via {src_ip}")
+                            print(f"[{self.node_id}]  Rota MELHORADA {video} via {src_ip}")
                     else:
-                        # Adicionar nova rota à lista
                         self.routing_table[video].append(new_route)
-                        print(f"[{self.node_id}] Nova rota alternativa para {video}: via {src_ip} (hops={hop_count})")
-                    
+                        print(f"[{self.node_id}]  Nova rota alternativa {video}: via {src_ip}")
+
+        # FASE 2: CONTROLO DE FLOOD (Executa APENAS UMA VEZ por ID)
+        
+        key = (origin_ip, msg_id)
+
+        with self.lock:
+            if key in self.flood_cache:
+                return  # Já reenviei isto antes, não faço broadcast storm
+            
+            # Marca como visto para não reenviar novamente
+            self.flood_cache.add(key)
 
         # ------------------ 6. Criar mensagem atualizada ------------------
         new_msg = Message.create_flood_message(
@@ -257,12 +250,10 @@ class Node:
             start_timestamp=start_ts
         )
 
-
         # ------------------ 7. Reenviar para vizinhos ------------------
         for neigh, is_active in self.neighbors.items():
-            if neigh != src_ip:
+            if neigh != src_ip: 
                 self.send_tcp_message(neigh, new_msg)
-
                 
     def announce_leave(self):
         """

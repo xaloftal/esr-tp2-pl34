@@ -7,7 +7,7 @@ from tkinter import Tk
 from aux_files.ClienteGUI import ClienteGUI
 
 from aux_files.aux_message import Message, MsgType
-from config import NODE_TCP_PORT, NODE_RTP_PORT, RTP_PORT,  BOOTSTRAPPER_PORT
+from config import NODE_TCP_PORT, NODE_RTP_PORT,  BOOTSTRAPPER_PORT
 
 
 class ControlClient():
@@ -21,7 +21,7 @@ class ControlClient():
         self.bootstrapper_ip = bootstrapper_ip
         self.TCPport = NODE_TCP_PORT
         self.UDPport = NODE_RTP_PORT
-        self.RTPport = RTP_PORT
+        self.RTPport = NODE_RTP_PORT
         self.rtspSeq = 0
         self.frameNbr = 0
         self.neighbors = {}
@@ -66,9 +66,8 @@ class ControlClient():
             for neigh in neighbors:
                 join_msg = Message.create_join_message(self.node_ip, neigh)
 
-                active = self.send_tcp_message(neigh, join_msg)
-                
-                # if there's a connection, add the neighbour with True
+                active = self.send_tcp_message(neigh, join_msg)                
+                # if there's a connection, add the neighbour with True, if not, false
                 self.neighbors[neigh] = True if active else False
         
         except json.JSONDecodeError:
@@ -80,7 +79,7 @@ class ControlClient():
 
     def send_tcp_message(self, dest_ip, message):
             """
-            Envia uma mensagem de controlo (Message object) para um nó vizinho.
+            Envia uma mensagem de controlo para um nó vizinho.
             """
             try:
                 msg = message.to_bytes() if isinstance(message, Message) else Message.from_dict(message).to_bytes()
@@ -96,6 +95,55 @@ class ControlClient():
             except: #Exception as e:
                 # print(f"[Cliente] Erro a enviar TCP para {dest_ip}:{NODE_TCP_PORT}: {e}")
                 return 
+            
+            
+    def listener_tcp(self):
+        """
+        Handler para conexões TCP recebidas (join, leave)
+        """
+        
+        # open the TCP socket
+        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server_socket.bind((self.node_ip, self.TCPport))
+        
+        server_socket.listen()
+        print(f"[Cliente] A escutar conexões TCP em {self.node_ip}:{self.TCPport}")
+        
+        while True:
+            conn, addr = server_socket.accept()
+            #just want to send the message to the handler
+            
+            threading.Thread(target=self._handle_connection, args=(conn, addr), daemon=True).start()
+            
+            
+    def _handle_connection(self, conn, addr):
+        try:
+            raw = conn.recv(65535)
+            if not raw:
+                return
+
+            msg = Message.from_bytes(raw)
+            if msg:
+                self.handle_message(msg)
+        except Exception as e:
+            print(f"[Cliente] Erro a ler dados de {addr[0]}: {e}")
+        finally:
+            conn.close()
+        
+        
+    def handle_message(self, msg):
+        msg_type = msg.get_type()
+        sender_ip = msg.get_src()
+        
+        if msg_type == MsgType.JOIN:
+            print(f"[Cliente] Recebido JOIN de {sender_ip}")
+            self.neighbors[sender_ip] = True
+            
+        elif msg_type == MsgType.LEAVE:
+            print(f"[Cliente] Recebido LEAVE de {sender_ip}")
+            if sender_ip in self.neighbors:
+                self.neighbors[sender_ip] = False
+        
 
 if __name__ == "__main__":    
     if len(sys.argv) < 4:

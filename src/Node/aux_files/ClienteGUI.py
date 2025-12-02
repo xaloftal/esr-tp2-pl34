@@ -2,8 +2,10 @@ from tkinter import *
 import tkinter.messagebox as tkMessageBox
 from PIL import Image, ImageTk
 import socket, threading, sys, traceback, os
+from Node import send_tcp_message
 
 from aux_files.RtpPacket import RtpPacket
+from aux_files.aux_message import Message
 
 CACHE_FILE_NAME = "cache-"
 CACHE_FILE_EXT = ".jpg"
@@ -60,13 +62,45 @@ class ClienteGUI:
 		self.label.grid(row=0, column=0, columnspan=4, sticky=W+E+N+S, padx=5, pady=5) 
 	
 	def setupMovie(self):
-		"""Setup button handler."""
-		print("Not implemented...")
+        """Setup button handler."""
+        self.state = 1 
+        
+        video_name = self.client.video
+        
+        if not video_name:
+            tkMessageBox.showerror("Erro", "Nenhum vídeo definido no arranque do cliente.")
+            return
+
+        my_neighbors = self.client.neighbors 
+        
+        gateway_ip = None
+        
+        # Procura o primeiro vizinho ativo 
+        for ip, is_active in my_neighbors.items():
+            if is_active:
+                gateway_ip = ip
+                break
+        
+        if gateway_ip:
+            print(f"[ClientGUI] A pedir '{video_name}' ao vizinho/gateway: {gateway_ip}")
+
+            # Cria a mensagem TCP
+            start_msg = Message.create_stream_start_message(
+                srcip=self.client.node_ip, 
+                destip=gateway_ip, 
+                video=video_name
+            )
+
+            threading.Thread(target=self.client.send_tcp_message, args=(gateway_ip, start_msg)).start()
+            
+        else:
+            tkMessageBox.showerror("Erro de Conexão", "Não foi encontrado nenhum vizinho ativo para enviar o pedido.")
+
 	
 	def exitClient(self):
 		"""Teardown button handler."""
 		self.master.destroy() # Close the gui window
-		os.remove(CACHE_FILE_NAME + str(self.sessionId) + CACHE_FILE_EXT) # Delete the cache image from video
+		os.remove(CACHE_FILE_NAME + str(self.sessionId) + CACHE_FILE_EXT) 
 
 	def pauseMovie(self):
 		"""Pause button handler."""
@@ -78,6 +112,7 @@ class ClienteGUI:
 		threading.Thread(target=self.listenRtp).start()
 		self.playEvent = threading.Event()
 		self.playEvent.clear()
+
 	
 	def listenRtp(self):		
 		"""Listen for RTP packets."""
@@ -142,3 +177,5 @@ class ClienteGUI:
 			self.exitClient()
 		else: # When the user presses cancel, resume playing.
 			self.playMovie()
+
+

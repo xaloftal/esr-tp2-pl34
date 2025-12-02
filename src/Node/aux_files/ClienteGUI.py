@@ -1,9 +1,9 @@
 from tkinter import *
-import tkinter.messagebox
+import tkinter.messagebox as tkMessageBox
 from PIL import Image, ImageTk
 import socket, threading, sys, traceback, os
 
-from RtpPacket import RtpPacket
+from aux_files.RtpPacket import RtpPacket
 
 CACHE_FILE_NAME = "cache-"
 CACHE_FILE_EXT = ".jpg"
@@ -11,19 +11,23 @@ CACHE_FILE_EXT = ".jpg"
 class ClienteGUI:
 	
 	# Initiation..
-	def __init__(self, master, addr, port):
+	def __init__(self, master, client):
 		self.master = master
 		self.master.protocol("WM_DELETE_WINDOW", self.handler)
-		self.createWidgets()
-		self.addr = addr
-		self.port = int(port)
+		self.client = client
+		self.addr = client.node_ip
+		self.port = client.RTPport
 		self.rtspSeq = 0
 		self.sessionId = 0
 		self.requestSent = -1
 		self.teardownAcked = 0
-		self.openRtpPort()
-		self.playMovie()
 		self.frameNbr = 0
+		self.createWidgets()
+		self.openRtpPort()
+		# Don't call playMovie here - let user click Play button
+		# self.playMovie()
+  
+  
 		
 	def createWidgets(self):
 		"""Build GUI."""

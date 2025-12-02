@@ -9,7 +9,7 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from config import HOST, PORT
-from overlay_nodes import node_overlay_c1, node_overlay_c2, node_overlay_c3
+from overlay_nodes import node_overlay_c1, node_overlay_c2, node_overlay_c3, node_overlay_c4
 from Node.aux_files.aux_message import Message
 
 
@@ -22,6 +22,8 @@ class Bootstrapper():
             self.map = node_overlay_c2
         elif config == "c1":
             self.map = node_overlay_c1
+        elif config == "c4":
+            self.map = node_overlay_c4
         else:
             self.map = node_overlay_c3
         
@@ -129,7 +131,7 @@ if __name__ == "__main__":
     config = sys.argv[1]
     
     # Validate config
-    if config not in ["c1", "c2", "c3"]:
+    if config not in ["c1", "c2", "c3","c4"]:
         print(f"Error: Invalid CONFIG '{config}'. Must be c1, c2, or c3")
         sys.exit(1)
     

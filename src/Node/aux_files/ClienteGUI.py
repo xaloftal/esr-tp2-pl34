@@ -38,13 +38,14 @@ class ClienteGUI:
         self.setup["command"] = self.setupMovie
         self.setup.grid(row=1, column=0, padx=2, pady=2)
         
-        # Create Play button        
+        # Create Play button		
+
         self.start = Button(self.master, width=20, padx=3, pady=3)
         self.start["text"] = "Play"
         self.start["command"] = self.playMovie
         self.start.grid(row=1, column=1, padx=2, pady=2)
         
-        # Create Pause button            
+        # Create Pause button			
         self.pause = Button(self.master, width=20, padx=3, pady=3)
         self.pause["text"] = "Pause"
         self.pause["command"] = self.pauseMovie
@@ -55,11 +56,15 @@ class ClienteGUI:
         self.teardown["text"] = "Teardown"
         self.teardown["command"] =  self.exitClient
         self.teardown.grid(row=1, column=3, padx=2, pady=2)
-
+        # Create Ping button
         self.ping = Button(self.master, width=20, padx=3, pady=3)
         self.ping["text"] = "PING"
         self.ping["command"] = self.sendPing
         self.ping.grid(row=2, column=0, padx=2, pady=2)
+
+        # Label para mostrar resposta PONG
+        self.pongLabel = Label(self.master, text="", fg="green")
+        self.pongLabel.grid(row=2, column=1, padx=2, pady=2)
 
 
         # Create a label to display the movie
@@ -118,7 +123,7 @@ class ClienteGUI:
         self.playEvent.clear()
 
     
-    def listenRtp(self):        
+    def listenRtp(self):		
         """Listen for RTP packets."""
         while True:
             try:
@@ -174,6 +179,31 @@ class ClienteGUI:
         except:
             tkMessageBox.showwarning('Unable to Bind', 'Unable to bind PORT=%d' %self.rtpPort)
 
+    def sendPing(self):
+        self.pongLabel.config(text="") # limpar resposta anterior
+        
+        neighbors = self.client.neighbors
+        
+        gateway = None
+        for ip, active in neighbors.items():
+            if active:
+                gateway = ip
+                break
+        
+        if not gateway:
+            print("Nenhum vizinho ativo!")
+            self.pongLabel.config(text="Sem vizinhos", fg="red")
+            return
+        
+        print(f"[CLIENT] A enviar PING para {gateway}")
+        
+        msg = Message.create_ping_message(
+            srcip=self.client.node_ip,
+            destip=gateway
+            )
+        
+        self.client.send_tcp_message(gateway, msg)
+        
     def handler(self):
         """Handler on explicitly closing the GUI window."""
         self.pauseMovie()

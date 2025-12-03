@@ -28,6 +28,7 @@ class Node:
         self.node_ip = node_ip
         self.last_alive = {}     # dicionário: {ip : timestamp}
         self.fail_count = {}     # dicionário: {ip : nº de falhas}
+        self.last_hop = {}      # dicionário: {ip : last_hop_ip}
         self.leave_cache = set()
         self.join_cache = set()
         self.flood_cache = set()
@@ -171,7 +172,72 @@ class Node:
             
         elif msg_type == MsgType.STREAM_START:
             self.handle_stream_start(msg)
-        
+            
+        elif msg_type == MsgType.PING:
+            print("\n" + "="*60)
+            print(f"[{self.node_id}]  RECEBI PING")
+            print(f"    → ID:        {msg.id}")
+            print(f"    → Sender:    {msg_sender}")
+            print(f"    → Origin:    {msg.get_src()}")
+            print("="*60)
+
+            # Guardar hop anterior (para rota de volta)
+            self.last_hop[msg.id] = msg_sender
+            print(f"[{self.node_id}] last_hop[{msg.id}] = {msg_sender}")
+
+            # --- Se este nó é o SERVIDOR ---
+            if self.is_server:
+                pong = Message.create_pong_message(
+                    srcip=self.node_ip,
+                    destip=msg.get_src()     # o cliente final
+                )
+                pong.id = msg.id
+
+                prev_hop = self.last_hop[msg.id]   # nó imediatamente anterior na rota de ida
+
+                print(f"[{self.node_id}] Envio PONG para hop anterior {prev_hop}")
+                self.send_tcp_message(prev_hop, pong)
+                return
+
+            # --- Este nó é intermédio ---
+            # Reencaminhar PING para qualquer vizinho ativo, exceto quem o enviou
+            for neigh, active in self.neighbors.items():
+                if active and neigh != msg_sender:
+                    print(f"[{self.node_id}] Forward PING {msg.id} → {neigh}")
+                    self.send_tcp_message(neigh, msg)
+                    return
+
+            print(f"[{self.node_id}] Sem vizinho para reenviar PING")
+
+
+        elif msg_type == MsgType.PONG:
+            print("\n" + "-"*60)
+            print(f"[{self.node_id}]  RECEBI PONG")
+            print(f"    → ID:        {msg.id}")
+            print(f"    → Sender:    {msg_sender}")
+            print(f"    → Origin:    {msg.get_src()}")
+            print("-"*60)
+
+            # Guardar hop anterior também NA VOLTA
+            self.last_hop[msg.id] = msg_sender
+            print(f"[{self.node_id}] updated last_hop[{msg.id}] = {msg_sender}")
+
+            # O destino FINAL (cliente) verifica se este nó é o destino final
+            if self.node_ip == msg.get_dest():
+                print(f"[{self.node_id}] 🎉 PONG chegou ao CLIENTE FINAL!")
+                return
+
+            # Descobrir hop seguinte (voltar para trás na rota)
+            prev_hop = self.last_hop.get(msg.id)
+
+            if prev_hop is None:
+                print(f"[{self.node_id}] ERRO: last_hop sem entrada para {msg.id}")
+                return
+
+            print(f"[{self.node_id}] Forward PONG {msg.id} → {prev_hop}")
+            self.send_tcp_message(prev_hop, msg)
+
+
         else:
             print(f"[{self.node_id}] Tipo de mensagem desconhecido: {msg_type}")
             
@@ -337,7 +403,7 @@ class Node:
         msg_video = msg_payload.get("video", None)
         
         if self.is_server:
-            if msg_video in self.server.video:
+            if msg_video == self.server.video:
                 print(f"[{self.node_id}] Pedido de stream {msg_video} recebido de {msg_sender}. A iniciar envio...")
                 self.server.start_stream_to_client(msg_sender, msg_video)
             
@@ -499,6 +565,13 @@ class Node:
                     best_route = next_hop
         
         return best_route
+
+    def get_next_hop_for_ping(self, previous_hop):
+        """Escolhe o vizinho ativo para onde enviar o PING, evitando loop."""
+        for neigh, active in self.neighbors.items():
+            if active and neigh != previous_hop:
+                return neigh
+        return None
 
 
 

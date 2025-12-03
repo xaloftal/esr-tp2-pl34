@@ -314,8 +314,6 @@ class Node:
                 )
                 self.send_tcp_message(next_hop, reply)
                 print(f"[{self.node_id}] Reencaminhei PONG para {next_hop}")
->>>>>>> f563001 (ping pong)
-
         else:
             print(f"[{self.node_id}] Tipo de mensagem desconhecido: {msg_type}")
             

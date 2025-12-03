@@ -27,6 +27,7 @@ class ControlClient():
         self.frameNbr = 0
         self.neighbors = {}
         self.register_and_join()  # vizinhos ativos
+        self.gui_callback = None
         
         # video(s) que quer ver
         self.videos = videos
@@ -144,7 +145,10 @@ class ControlClient():
             print(f"[Cliente] Recebido LEAVE de {sender_ip}")
             if sender_ip in self.neighbors:
                 self.neighbors[sender_ip] = False
-    
+        elif msg_type == MsgType.PONG:
+            print(f"[Cliente] Recebi PONG de {sender_ip}")
+            if hasattr(self, "gui_callback") and self.gui_callback:
+                self.gui_callback("PONG RECEBIDO")
     
     def heartbeat(self):
         """Envia mensagens ALIVE para os vizinhos """
@@ -176,8 +180,14 @@ if __name__ == "__main__":
     heartbeat_thread = threading.Thread(target=client.heartbeat, daemon=True)
     heartbeat_thread.start()
     
+    # 👉 INICIAR LISTENER TCP (FUNDAMENTAL)
+    listener_thread = threading.Thread(target=client.listener_tcp, daemon=True)
+    listener_thread.start()
+    
     # Criar GUI
     root = Tk()
     app = ClienteGUI(root, client)
     root.title(f"Cliente RTP - {node_id}")
+
+
     root.mainloop()

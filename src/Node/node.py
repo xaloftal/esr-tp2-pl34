@@ -334,39 +334,44 @@ class Node:
     def handle_stream_start(self, msg):
         msg_sender = msg.get_src() if isinstance(msg, Message) else msg.get("srcip")
         msg_payload = msg.get_payload() if isinstance(msg, Message) else msg.get("payload", {})
-        msg_video = msg_payload.get("video", None)
+        video = msg_payload.get("video", None)
         
         if self.is_server:
-            if msg_video in self.server.video:
-                print(f"[{self.node_id}] Pedido de stream {msg_video} recebido de {msg_sender}. A iniciar envio...")
-                self.server.start_stream_to_client(msg_sender, msg_video)
+            if video in self.server.video:
+                print(f"[{self.node_id}] Pedido de stream {video} recebido de {msg_sender}. A iniciar envio...")
+                self.server.start_stream_to_client(msg_sender, video)
             
             else:
-                print(f"[{self.node_id}] Pedido de stream {msg_video} recebido de {msg_sender}, mas vídeo não disponível.")
+                print(f"[{self.node_id}] Pedido de stream {video} recebido de {msg_sender}, mas vídeo não disponível.")
                 
         else:
-            print(f"[{self.node_id}] Pedido de stream START recebido de {msg_sender} para vídeo {msg_video}, mas não sou servidor.")
+            print(f"[{self.node_id}] Pedido de stream START recebido de {msg_sender} para vídeo {video}, mas não sou servidor.")
 
-            if msg_video not in self.routing_table:
-                print(f"[{self.node_id}] Nenhuma rota conhecida para o vídeo {msg_video}.")
+            if video not in self.routing_table:
+                print(f"[{self.node_id}] Nenhuma rota conhecida para o vídeo {video}.")
                 return
-
-            best_neigh = self.find_best_active_neighbour(msg_video)
-
+            best_neigh = self.find_best_active_neighbour(video)
             if best_neigh:
-                print(f"[{self.node_id}] A reenviar pedido de stream START para {best_neigh} para vídeo {msg_video}.")
-
+                print(f"[{self.node_id}] A reenviar pedido de stream START para {best_neigh} para vídeo {video}.")
+                self.activate_route(video, best_neigh)
                 forward_msg = Message.create_stream_start_message(
                     srcip=self.node_ip,
                     destip=best_neigh,
-                    video=msg_video
+                    video=video
                 )
 
                 self.send_tcp_message(best_neigh, forward_msg)
 
             else:
-                print(f"[{self.node_id}] Nenhum vizinho encontrado para reenviar pedido de stream START para vídeo {msg_video}.")
-
+                print(f"[{self.node_id}] Nenhum vizinho encontrado para reenviar pedido de stream START para vídeo {video}.")
+    
+    def activate_route(self, video, next_hop_ip):
+        """Função auxiliar para mudar o estado da rota para Ativo"""
+        if video in self.routing_table:
+            for route in self.routing_table[video]:
+                if route["next_hop"] == next_hop_ip:
+                    route["is_active"] = True
+                    print(f"[{self.node_id}] Rota para {video} via {next_hop_ip} marcada como ATIVA.") 
                
      # a minha ideia é passar esta para o cliente, já que é uma função só, mas era preciso alguma marosca para mandar aquele find_best_neighbour junto     
     def stream_start_handler(self, video):
@@ -384,10 +389,6 @@ class Node:
                 destip=best_neigh,
                 video=video
             )
-
-            # envia através do control client
-            #self.client.send_tcp_message(best_neigh, start_msg)
-            #é o Node que sabe enviar mensagens TCP, não o cliente.
             self.send_tcp_message(best_neigh, start_msg)
         else:
             print(f"[{self.node_id}] Nenhum vizinho ativo encontrado para o vídeo {video}.")
@@ -479,21 +480,28 @@ class Node:
 
                     
     def find_best_active_neighbour(self, video):
-        """Escolhe o vizinho ativo com a melhor métrica para um determinado vídeo."""
+        """
+        Escolhe o vizinho ativo com a melhor métrica para um determinado vídeo.
+        NOTA: Não verificamos route['is_active'] aqui, porque estamos a tentar
+        iniciar a stream. Apenas verificamos se o VIZINHO está online.
+        """
         if video not in self.routing_table:
             return None
-        
+            
         best_route = None
-        best_metric = (999999, 999999999)  # (hop_count, latency)
+        # Usar float('inf') é mais seguro que números hardcoded
+        best_metric = (float('inf'), float('inf'))  # (hop_count, latency)
         
         for route in self.routing_table[video]:
+            
             next_hop = route["next_hop"]
             hop_count, latency = route["metric"]
-            is_active = route["is_active"]
             
-            # Apenas rotas ativas e com vizinho ativo
-            if is_active and self.neighbors.get(next_hop, False):
+            neighbor_is_online = self.neighbors.get(next_hop, False)
+            
+            if neighbor_is_online:
                 # Comparar métricas (hop_count primeiro, depois latency)
+                # Verifica se encontrou uma métrica melhor (menor)
                 if (hop_count < best_metric[0]) or (hop_count == best_metric[0] and latency < best_metric[1]):
                     best_metric = (hop_count, latency)
                     best_route = next_hop

@@ -343,7 +343,7 @@ class Node:
         msg_payload = msg.get_payload() if isinstance(msg, Message) else msg.get("payload", {})
         video = msg_payload.get("video", None)
         
-        # --- LÓGICA SERVIDOR ---
+        # --- SERVER LOGIC ---
         if self.is_server:
             if video in self.server.video:
                 print(f"[{self.node_id}] Pedido de stream {video} recebido de {msg_sender}. A iniciar envio...")
@@ -351,12 +351,12 @@ class Node:
             else:
                 print(f"[{self.node_id}] Pedido de stream {video} recebido de {msg_sender}, mas vídeo não disponível.")
                 
-        # --- LÓGICA ROUTER / NÓ INTERMÉDIO ---
+        # --- ROUTER LOGIC ---
         else:
             
             print(f"[{self.node_id}] Pedido de stream START recebido de {msg_sender} para vídeo {video}.")
             
-            # 1. Adicionar cliente à lista de distribuição (Downstream)
+            # 1. Add clients to the downstream
             if video not in self.downstream_clients:
                 self.downstream_clients[video] = []
             if msg_sender not in self.downstream_clients[video]:
@@ -364,14 +364,14 @@ class Node:
                 print(f"[{self.node_id}] Cliente {msg_sender} adicionado à lista de distribuição de {video}.")
 
             # 2. Verificar se a rota JÁ está ativa (Stream já a correr)
-            ac = False
+            route_activate = False
             if video in self.routing_table:
                 for route in self.routing_table[video]:
                     if route["is_active"]:
-                        ac = True
+                        route_activate = True
                         break
             
-            if ac:
+            if route_activate:
                 print(f"[{self.node_id}] O vídeo {video} já está a ser recebido. Não é preciso pedir ao vizinho.")
                 return
             
@@ -383,9 +383,6 @@ class Node:
             best_neigh = self.find_best_active_neighbour(video)
             
             if best_neigh:
-                # --- ALTERAÇÃO AQUI ---
-                # REMOVIDO: self.activate_route(video, best_neigh) 
-                # MOTIVO: Só ativamos quando recebermos o primeiro pacote RTP (no handle_rtp)
                 
                 #  Adicionar a uma lista de "pendentes" para evitar spam de pedidos
                 if video not in self.pending_requests:
@@ -543,6 +540,7 @@ class Node:
 
     def open_rtp_port(self):
         """Cria o socket UDP e inicia a thread de escuta."""
+
         try:
             self.rtp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.rtp_socket.bind((self.node_ip, self.rtp_port))
@@ -585,11 +583,12 @@ class Node:
              self.pending_requests.remove(video_name)
 
         # 2. ATIVAR A ROTA (A parte mais importante!)
-        # Se estamos a receber dados do sender_ip, é porque essa rota está viva.
+        
         self.activate_route(video_name, sender_ip)
         
         # 3. REENCAMINHAR (Forwarding)
         # Enviar cópia para todos os clientes que pediram este vídeo
+        
         if video_name in self.downstream_clients:
             for client_ip in self.downstream_clients[video_name]:
                 # Envia o pacote tal e qual como chegou (rápido)

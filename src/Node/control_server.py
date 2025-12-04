@@ -24,6 +24,7 @@ class ControlServer:
             self.server_socket.listen()
             print(f"[Servidor] A escutar em {self.host_ip}:{self.TCPport}")
 
+
             while True:
                 conn, addr = self.server_socket.accept()
                 threading.Thread(target=self._handle_connection, args=(conn, addr), daemon=True).start()
@@ -61,10 +62,10 @@ class ControlServer:
         if not video_path:
             print("[Servidor] Erro: vídeo não encontrado na configuração.")
             return
-
+    
         rtp = RtpServer(video_file=video_path,
                         client_ip=client_ip,
                         client_port=self.UDPport)
         rtp.start()
 
-        print(f"[Servidor] Envio de {video_name} iniciado para {client_ip}")
+        

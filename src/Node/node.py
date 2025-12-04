@@ -34,6 +34,13 @@ class Node:
         self.network_ready = False
         self.bootstrapper_ip = bootstrapper_ip
         self.video = video
+        self.downstream_clients = {} # 
+        self.pending_requests = [] # Lista de vídeos que já pedimos mas ainda não chegaram
+        self.rtp_port = NODE_RTP_PORT
+        self.open_rtp_port()
+        
+       
+        
          
         # --- Flag de Servidor ---
         self.is_server = is_server        
@@ -326,7 +333,7 @@ class Node:
             for video, routes in self.routing_table.items():
                 for route in routes:
                     if route["next_hop"] == neigh_ip:
-                        route["is_active"] = True
+                        route["is_active"] = False
                         print(f"[{self.node_id}] Rota reativada por JOIN: {video} via {neigh_ip}")
 
 
@@ -336,24 +343,56 @@ class Node:
         msg_payload = msg.get_payload() if isinstance(msg, Message) else msg.get("payload", {})
         video = msg_payload.get("video", None)
         
+        # --- LÓGICA SERVIDOR ---
         if self.is_server:
             if video in self.server.video:
                 print(f"[{self.node_id}] Pedido de stream {video} recebido de {msg_sender}. A iniciar envio...")
                 self.server.start_stream_to_client(msg_sender, video)
-            
             else:
                 print(f"[{self.node_id}] Pedido de stream {video} recebido de {msg_sender}, mas vídeo não disponível.")
                 
+        # --- LÓGICA ROUTER / NÓ INTERMÉDIO ---
         else:
-            print(f"[{self.node_id}] Pedido de stream START recebido de {msg_sender} para vídeo {video}, mas não sou servidor.")
+            
+            print(f"[{self.node_id}] Pedido de stream START recebido de {msg_sender} para vídeo {video}.")
+            
+            # 1. Adicionar cliente à lista de distribuição (Downstream)
+            if video not in self.downstream_clients:
+                self.downstream_clients[video] = []
+            if msg_sender not in self.downstream_clients[video]:
+                self.downstream_clients[video].append(msg_sender)
+                print(f"[{self.node_id}] Cliente {msg_sender} adicionado à lista de distribuição de {video}.")
 
+            # 2. Verificar se a rota JÁ está ativa (Stream já a correr)
+            ac = False
+            if video in self.routing_table:
+                for route in self.routing_table[video]:
+                    if route["is_active"]:
+                        ac = True
+                        break
+            
+            if ac:
+                print(f"[{self.node_id}] O vídeo {video} já está a ser recebido. Não é preciso pedir ao vizinho.")
+                return
+            
+            # 3. Verificar se temos rota para pedir
             if video not in self.routing_table:
                 print(f"[{self.node_id}] Nenhuma rota conhecida para o vídeo {video}.")
                 return
+            
             best_neigh = self.find_best_active_neighbour(video)
+            
             if best_neigh:
+                # --- ALTERAÇÃO AQUI ---
+                # REMOVIDO: self.activate_route(video, best_neigh) 
+                # MOTIVO: Só ativamos quando recebermos o primeiro pacote RTP (no handle_rtp)
+                
+                #  Adicionar a uma lista de "pendentes" para evitar spam de pedidos
+                if video not in self.pending_requests:
+                   self.pending_requests.append(video)
+
                 print(f"[{self.node_id}] A reenviar pedido de stream START para {best_neigh} para vídeo {video}.")
-                self.activate_route(video, best_neigh)
+                
                 forward_msg = Message.create_stream_start_message(
                     srcip=self.node_ip,
                     destip=best_neigh,
@@ -363,17 +402,10 @@ class Node:
                 self.send_tcp_message(best_neigh, forward_msg)
 
             else:
-                print(f"[{self.node_id}] Nenhum vizinho encontrado para reenviar pedido de stream START para vídeo {video}.")
-    
-    def activate_route(self, video, next_hop_ip):
-        """Função auxiliar para mudar o estado da rota para Ativo"""
-        if video in self.routing_table:
-            for route in self.routing_table[video]:
-                if route["next_hop"] == next_hop_ip:
-                    route["is_active"] = True
-                    print(f"[{self.node_id}] Rota para {video} via {next_hop_ip} marcada como ATIVA.") 
+                print(f"[{self.node_id}] Nenhum vizinho encontrado para reenviar pedido de stream START para vídeo {video}.") 
+             
+
                
-     # a minha ideia é passar esta para o cliente, já que é uma função só, mas era preciso alguma marosca para mandar aquele find_best_neighbour junto     
     def stream_start_handler(self, video):
         if video not in self.routing_table:
             print(f"[{self.node_id}] Nenhuma rota conhecida para o vídeo {video}.")
@@ -509,6 +541,69 @@ class Node:
         return best_route
 
 
+    def open_rtp_port(self):
+        """Cria o socket UDP e inicia a thread de escuta."""
+        try:
+            self.rtp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.rtp_socket.bind((self.node_ip, self.rtp_port))
+            
+            print(f"[{self.node_id}] À escuta de RTP (UDP) no {self.node_ip}:{self.rtp_port}")
+
+            # Thread para não bloquear o resto do programa
+            threading.Thread(target=self.listen_rtp_thread, daemon=True).start()
+        except Exception as e:
+            print(f"[{self.node_id}] Erro ao abrir socket RTP: {e}")
+
+    def listen_rtp_thread(self):
+        """Loop que recebe pacotes UDP continuamente."""
+        while True:
+            try:
+                # Recebe dados brutos (bytes) e endereço do remetente
+                data, address = self.rtp_socket.recvfrom(20480)
+                
+                if data:
+                    sender_ip = address[0]
+                    
+                    # NOTA: Num sistema real, o nome do vídeo viria no pacote.
+                    # Aqui, assumimos que é o vídeo que este nó está configurp«´'+do para gerir
+                    # ou terias de ter lógica para extrair do header RTP.
+                    current_video = self.video if self.video else "movie.Mjpeg"
+
+                    self.handle_rtp_packet(data, current_video, sender_ip)
+
+            except Exception as e:
+                print(f"[{self.node_id}] Erro na thread RTP: {e}")
+                break
+
+    def handle_rtp_packet(self, raw_data, video_name, sender_ip):
+        """
+        1. Ativa a rota (porque recebemos dados, o caminho é válido).
+        2. Reencaminha para quem pediu (downstream).
+        """
+        # 1. Se estava na lista de "pedidos pendentes", removemos (já chegou!)
+        if video_name in self.pending_requests:
+             self.pending_requests.remove(video_name)
+
+        # 2. ATIVAR A ROTA (A parte mais importante!)
+        # Se estamos a receber dados do sender_ip, é porque essa rota está viva.
+        self.activate_route(video_name, sender_ip)
+        
+        # 3. REENCAMINHAR (Forwarding)
+        # Enviar cópia para todos os clientes que pediram este vídeo
+        if video_name in self.downstream_clients:
+            for client_ip in self.downstream_clients[video_name]:
+                # Envia o pacote tal e qual como chegou (rápido)
+                self.rtp_socket.sendto(raw_data, (client_ip, self.rtp_port))
+
+    def activate_route(self, video, neighbor_ip):
+        """Marca a rota como ativa na tabela de rotas."""
+        if video in self.routing_table:
+            with self.lock:
+                for route in self.routing_table[video]:
+                    if route["next_hop"] == neighbor_ip:
+                        if not route["is_active"]:
+                            route["is_active"] = True
+                            print(f"[{self.node_id}] Rota ATIVADA para {video} via {neighbor_ip} (RTP recebido)")
 
 
 # ------------------------------------------------------------------

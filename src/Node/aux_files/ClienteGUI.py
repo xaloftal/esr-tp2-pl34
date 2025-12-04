@@ -72,7 +72,8 @@ class ClienteGUI:
         my_neighbors = self.client.neighbors 
         
         gateway_ip = None
-        
+        # nao pode ser o vizinho pq assim faz mesmo que o flood n esteja ativo
+        #faz o pedido
         # Procura o primeiro vizinho ativo 
         for ip, is_active in my_neighbors.items():
             if is_active:
@@ -80,7 +81,7 @@ class ClienteGUI:
                 break
         
         if gateway_ip:
-            print(f"[ClientGUI] A pedir '{video_name}' ao vizinho/gateway: {gateway_ip}")
+            print(f"[ClientGUI] A pedir '{video_name}' ao vizinho: {gateway_ip}")
 
             # Cria a mensagem TCP
             start_msg = Message.create_stream_start_message(

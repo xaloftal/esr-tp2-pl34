@@ -76,6 +76,7 @@ class ClienteGUI:
     
     def exitClient(self):
         """Teardown button handler."""
+        self.client.stop_stream()
         self.master.destroy()
         # Remove cache file
         file_path = CACHE_FILE_NAME + "0" + CACHE_FILE_EXT # 0 is session ID

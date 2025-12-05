@@ -13,6 +13,7 @@ class ControlServer:
         self.handler_callback = handler_callback
         self.video = video      # pode ser string ou dict
         self.server_socket = None
+        self.active_streams = {}
 
     def start(self):
         threading.Thread(target=self._run_server, daemon=True).start()
@@ -48,12 +49,10 @@ class ControlServer:
         finally:
             conn.close()
 
-    # SERVIDOR RTP – enviar vídeo para cliente
     def start_stream_to_client(self, client_ip, video_name):
         print(f"[Servidor] Preparar envio RTP de {video_name} para {client_ip}")
 
-        # Se self.video for string → é o path
-        # Se for dict → é self.video[video_name]
+
         if isinstance(self.video, dict):
             video_path = self.video.get(video_name, None)
         else:
@@ -62,10 +61,28 @@ class ControlServer:
         if not video_path:
             print("[Servidor] Erro: vídeo não encontrado na configuração.")
             return
+        if client_ip in self.active_streams:
+            print(f"[Servidor] Já existe stream para {client_ip}. A reiniciar...")
+            self.active_streams[client_ip].stop()
+            del self.active_streams[client_ip]
     
         rtp = RtpServer(video_file=video_path,
                         client_ip=client_ip,
                         client_port=self.UDPport)
         rtp.start()
+        self.active_streams[client_ip] = rtp
+
+    def stop_stream_to_client(self, client_ip):
+        """Pára o envio de stream para um cliente específico."""
+        if client_ip in self.active_streams:
+            print(f"[Servidor] A parar stream para {client_ip}...")
+            
+            self.active_streams[client_ip].stop()
+            
+            # Remove da lista de ativos
+            del self.active_streams[client_ip]
+        else:
+            print(f"[Servidor] Pedido de paragem para {client_ip}, mas não há stream ativo.")
+    
 
         

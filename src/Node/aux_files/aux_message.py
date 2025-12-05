@@ -16,6 +16,7 @@ class MsgType:
     STREAM_END = "STREAM_END"
     REGISTER = "REGISTER"
     NEIGHBOUR = "NEIGHBOUR"
+    TEARDOWN = "TEARDOWN"
     
     # Data messages (UDP)
     STREAM_DATA = "STREAM_DATA"
@@ -228,6 +229,15 @@ class Message:
         """Create a STREAM_END message."""
         return cls(
             msg_type=MsgType.STREAM_END,
+            srcip=srcip,
+            destip=destip,
+            payload={"video": video}
+        )
+    @classmethod
+    def create_teardown_message(cls, srcip, destip, video):
+        """Create a TEARDOWN message."""
+        return cls(
+            msg_type=MsgType.TEARDOWN,
             srcip=srcip,
             destip=destip,
             payload={"video": video}

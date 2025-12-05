@@ -4,160 +4,200 @@ import socket
 import threading
 import sys
 import time
+import os
 from tkinter import Tk
 from aux_files.ClienteGUI import ClienteGUI
-
+from aux_files.RtpPacket import RtpPacket 
 from aux_files.aux_message import Message, MsgType
-from config import NODE_TCP_PORT, NODE_RTP_PORT,  BOOTSTRAPPER_PORT, HEARTBEAT_INTERVAL
+from config import NODE_TCP_PORT, NODE_RTP_PORT, BOOTSTRAPPER_PORT, HEARTBEAT_INTERVAL, FAIL_TIMEOUT, MAX_FAILS
 
+CACHE_FILE_NAME = "cache-"
+CACHE_FILE_EXT = ".jpg"
 
 class ControlClient():
-    """Cliente para visualizar videos RTP
-        Diferente de Node. Não herda nada.
+    """
+    Cliente: Gere a rede (TCP) e recebe o vídeo (UDP).
     """       
     
-    def __init__(self, node_id, node_ip, bootstrapper_ip, videos):
+    def __init__(self, node_id, node_ip, bootstrapper_ip, video):
         self.node_id = node_id
         self.node_ip = node_ip
         self.bootstrapper_ip = bootstrapper_ip
         self.TCPport = NODE_TCP_PORT
-        self.UDPport = NODE_RTP_PORT
-        self.RTPport = NODE_RTP_PORT
-        self.rtspSeq = 0
-        self.frameNbr = 0
-        self.neighbors = {}
-        self.register_and_join()  # vizinhos ativos
         
-        # video(s) que quer ver
-        self.videos = videos
+        # --- Configuração RTP (UDP) ---
+        self.RTPport = NODE_RTP_PORT 
+        self.rtp_socket = None
+        self.video = video 
+        self.sessionId = 0
+        self.frameNbr = 0
+        
+        self.neighbors = {} 
+        self.last_alive = {} 
+        self.fail_count = {} 
+        
+        #  Registar e obter vizinhos
+        self.register_and_join() 
+        
+        #  Iniciar Listener TCP (Control)
+        threading.Thread(target=self.listener_tcp, daemon=True).start()
 
+        # Iniciar Listener UDP (RTP/Video)
+        self.open_rtp_port()
+
+    # -------------------------------------------------------------------------
+    # GESTÃO RTP (UDP)
+    # -------------------------------------------------------------------------
+    def open_rtp_port(self):
+        """Abre o socket UDP para receber o vídeo."""
+        try:
+            self.rtp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.rtp_socket.settimeout(0.5) 
+            self.rtp_socket.bind((self.node_ip, self.RTPport))
+            print(f"[Cliente] À escuta de RTP (Vídeo) em {self.node_ip}:{self.RTPport}")
+        except Exception as e:
+            print(f"[Cliente] Erro ao abrir socket RTP: {e}")
+
+    def listen_rtp(self, gui_update_callback=None):
+        while True:
+            try:
+                data, addr = self.rtp_socket.recvfrom(20480)
+                
+                if data:
+                    rtpPacket = RtpPacket()
+                    rtpPacket.decode(data)
+                    
+                    payload = rtpPacket.getPayload()
+                    currFrameNbr = rtpPacket.seqNum()
+                    
+                    
+                    if currFrameNbr > self.frameNbr:
+                        self.frameNbr = currFrameNbr
+                        
+                        # Proteção: Só processa se tiver dados reais
+                        if len(payload) > 0:
+                            image_file = self.write_frame(payload)
+                            
+                            if gui_update_callback:
+                                try:
+                                    gui_update_callback(image_file)
+                                except Exception as e:
+                                    # Se a imagem for má, apenas ignoramos este frame e não matamos a thread
+                                    print(f"[GUI] Frame {currFrameNbr} corrompido ou incompleto. Ignorar.")
+                        
+            except socket.timeout:
+                continue
+            except Exception as e:
+                print(f"[Cliente] RTP Interrompido: {e}")
+                break
+    def write_frame(self, data):
+        """Escreve o payload (imagem JPEG) num ficheiro temporário."""
+        cachename = CACHE_FILE_NAME + str(self.sessionId) + CACHE_FILE_EXT
+        with open(cachename, "wb") as file:
+            file.write(data)
+        return cachename
 
     def get_neighbors(self):
         return self.neighbors
             
-            
     def register_and_join(self):
-        """
-        ETAPA 1: Regista o nó no bootstrapper e obtém a lista de vizinhos.
-        """
-        print(f"[Cliente] A tentar registar com o IP: {self.node_ip}")
+        print(f"[Cliente] A registar {self.node_ip}...")
         try:
             client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             client.settimeout(5.0)
             client.connect((self.bootstrapper_ip, BOOTSTRAPPER_PORT))
-            print(f"[Cliente] Ligado ao Bootstrapper em {self.bootstrapper_ip}:{BOOTSTRAPPER_PORT}")
-
-            # Envia a mensagem de registo
+            
             message = Message.create_register_message(self.node_ip, self.bootstrapper_ip)
             client.sendall(message.to_bytes())
-
-            # Recebe a resposta (JSON com a lista de vizinhos)
+            
             response_raw = client.recv(4096).decode()
             client.close()
-
-            data = Message.from_json(response_raw)
-            if not data:
-                print(f"[Cliente] Falha a parsear resposta do bootstrapper: {response_raw}")
-                return []
-                
-            neighbors = data.get_payload().get("neighbours", [])
             
-            print(f"[Cliente] Vizinhos recebidos do bootstrapper: {neighbors}")
-
+            data = Message.from_json(response_raw)
+            neighbors = data.get_payload().get("neighbours", []) if data else []
+            
+            print(f"[Cliente] Vizinhos: {neighbors}")
             for neigh in neighbors:
                 join_msg = Message.create_join_message(self.node_ip, neigh)
-
                 active = self.send_tcp_message(neigh, join_msg)                
-                # if there's a connection, add the neighbour with True, if not, false
                 self.neighbors[neigh] = True if active else False
-        
-        except json.JSONDecodeError:
-            print(f"[Cliente] Falha a parsear resposta do bootstrapper: {response_raw}")
-            return []
+                if active: self.last_alive[neigh] = time.time()
+                
         except Exception as e:
-            print(f"[Cliente] Erro a ligar/registar no bootstrapper: {e}")
-            return []
+            print(f"[Cliente] Erro Bootstrapper: {e}")
 
     def send_tcp_message(self, dest_ip, message):
-            """
-            Envia uma mensagem de controlo para um nó vizinho.
-            """
-            try:
-                msg = message.to_bytes() if isinstance(message, Message) else Message.from_dict(message).to_bytes()
-                
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                    sock.settimeout(2.0) # Timeout curto para não bloquear
-                    
-                    # Cada nó escuta na mesma porta de controlo
-                    sock.connect((dest_ip, NODE_TCP_PORT)) 
-                    sock.sendall(msg)
-                return True
+        try:
+            msg = message.to_bytes() if isinstance(message, Message) else Message.from_dict(message).to_bytes()
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.settimeout(2.0) 
+                sock.connect((dest_ip, NODE_TCP_PORT)) 
+                sock.sendall(msg)
+            return True
+        except:
+            return False
 
-            except: #Exception as e:
-                # print(f"[Cliente] Erro a enviar TCP para {dest_ip}:{NODE_TCP_PORT}: {e}")
-                return 
-            
-            
     def listener_tcp(self):
-        """
-        Handler para conexões TCP recebidas (join, leave)
-        """
-        
-        # open the TCP socket
-        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server_socket.bind((self.node_ip, self.TCPport))
-        
-        server_socket.listen()
-        print(f"[Cliente] A escutar conexões TCP em {self.node_ip}:{self.TCPport}")
-        
-        while True:
-            conn, addr = server_socket.accept()
-            #just want to send the message to the handler
-            
-            threading.Thread(target=self._handle_connection, args=(conn, addr), daemon=True).start()
-            
-            
+        try:
+            server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            server_socket.bind((self.node_ip, self.TCPport))
+            server_socket.listen(5)
+            while True:
+                conn, addr = server_socket.accept()
+                threading.Thread(target=self._handle_connection, args=(conn, addr), daemon=True).start()
+        except Exception as e:
+            print(f"[Cliente] Erro Listener TCP: {e}")
+
     def _handle_connection(self, conn, addr):
         try:
-            raw = conn.recv(65535)
-            if not raw:
-                return
+            while True:
+                raw = conn.recv(65535)
+                if not raw: break
+                msg = Message.from_bytes(raw)
+                if msg: self.handle_message(msg)
+        except: pass
+        finally: conn.close()
 
-            msg = Message.from_bytes(raw)
-            if msg:
-                self.handle_message(msg)
-        except Exception as e:
-            print(f"[Cliente] Erro a ler dados de {addr[0]}: {e}")
-        finally:
-            conn.close()
-        
-        
     def handle_message(self, msg):
         msg_type = msg.get_type()
         sender_ip = msg.get_src()
-        
-        if msg_type == MsgType.JOIN:
-            print(f"[Cliente] Recebido JOIN de {sender_ip}")
+        if msg_type == MsgType.ALIVE:
+            self.last_alive[sender_ip] = time.time()
+            if sender_ip in self.neighbors: self.neighbors[sender_ip] = True
+        elif msg_type == MsgType.JOIN:
             self.neighbors[sender_ip] = True
-            
         elif msg_type == MsgType.LEAVE:
-            print(f"[Cliente] Recebido LEAVE de {sender_ip}")
-            if sender_ip in self.neighbors:
-                self.neighbors[sender_ip] = False
-    
-    
+            if sender_ip in self.neighbors: self.neighbors[sender_ip] = False
+
     def heartbeat(self):
-        """Envia mensagens ALIVE para os vizinhos """
         while True:
             time.sleep(HEARTBEAT_INTERVAL)
-
             for neigh, is_active in list(self.neighbors.items()):
-                # Apenas enviar ALIVE para vizinhos ativos
                 if is_active:
-                    alive_msg = Message.create_alive_message(self.node_ip, neigh)
-                    self.send_tcp_message(neigh, alive_msg)
-                    # Cliente não espera resposta, só envia para manter-se "vivo"
+                    self.send_tcp_message(neigh, Message.create_alive_message(self.node_ip, neigh))
+    
+    def stop_stream(self):
+        """Envia pedido para parar o stream antes de sair."""
+        if not self.video:
+            return
+
         
+        gateway_ip = None
+        for ip, active in self.neighbors.items():
+            if active:
+                gateway_ip = ip
+                break
+        
+        if gateway_ip:
+            print(f"[Cliente] A enviar TEARDOWN para {gateway_ip}...")
+            msg = Message(
+                msg_type=MsgType.TEARDOWN, 
+                srcip=self.node_ip, 
+                destip=gateway_ip,
+                payload={"video": self.video}
+            )
+            self.send_tcp_message(gateway_ip, msg)
 
 if __name__ == "__main__":    
     if len(sys.argv) < 4:
@@ -169,14 +209,11 @@ if __name__ == "__main__":
     boot_ip = sys.argv[3]
     video = sys.argv[4] if len(sys.argv) > 4 else None    
     
-    # Criar ControlClient wrapper
     client = ControlClient(node_id, node_ip, boot_ip, video)
     
-    # Iniciar heartbeat em background
-    heartbeat_thread = threading.Thread(target=client.heartbeat, daemon=True)
-    heartbeat_thread.start()
+    threading.Thread(target=client.heartbeat, daemon=True).start()
     
-    # Criar GUI
+    # Inicia a GUI
     root = Tk()
     app = ClienteGUI(root, client)
     root.title(f"Cliente RTP - {node_id}")

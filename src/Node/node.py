@@ -178,6 +178,9 @@ class Node:
             
         elif msg_type == MsgType.STREAM_START:
             self.handle_stream_start(msg)
+            
+        elif msg_type == MsgType.TEARDOWN:
+            self.handle_teardown(msg)
         
         else:
             print(f"[{self.node_id}] Tipo de mensagem desconhecido: {msg_type}")
@@ -230,13 +233,11 @@ class Node:
                         
                         if new_hop < old_hop or (new_hop == old_hop and new_lat < old_lat):
                             existing_route["metric"] = (new_hop, new_lat)
-                            existing_route["is_active"] = True
+                            existing_route["is_active"] = False
                             print(f"[{self.node_id}]  Rota MELHORADA {video} via {src_ip}")
                     else:
                         self.routing_table[video].append(new_route)
                         print(f"[{self.node_id}]  Nova rota alternativa {video}: via {src_ip}")
-
-        # FASE 2: CONTROLO DE FLOOD (Executa APENAS UMA VEZ por ID)
         
         key = (origin_ip, msg_id)
 
@@ -343,7 +344,7 @@ class Node:
         msg_payload = msg.get_payload() if isinstance(msg, Message) else msg.get("payload", {})
         video = msg_payload.get("video", None)
         
-        # --- LÓGICA SERVIDOR ---
+        # --- SERVER LOGIC ---
         if self.is_server:
             if video in self.server.video:
                 print(f"[{self.node_id}] Pedido de stream {video} recebido de {msg_sender}. A iniciar envio...")
@@ -351,12 +352,12 @@ class Node:
             else:
                 print(f"[{self.node_id}] Pedido de stream {video} recebido de {msg_sender}, mas vídeo não disponível.")
                 
-        # --- LÓGICA ROUTER / NÓ INTERMÉDIO ---
+        # --- ROUTER LOGIC ---
         else:
             
             print(f"[{self.node_id}] Pedido de stream START recebido de {msg_sender} para vídeo {video}.")
             
-            # 1. Adicionar cliente à lista de distribuição (Downstream)
+            # 1. Add clients to the downstream
             if video not in self.downstream_clients:
                 self.downstream_clients[video] = []
             if msg_sender not in self.downstream_clients[video]:
@@ -364,14 +365,14 @@ class Node:
                 print(f"[{self.node_id}] Cliente {msg_sender} adicionado à lista de distribuição de {video}.")
 
             # 2. Verificar se a rota JÁ está ativa (Stream já a correr)
-            ac = False
+            route_activate = False
             if video in self.routing_table:
                 for route in self.routing_table[video]:
                     if route["is_active"]:
-                        ac = True
+                        route_activate = True
                         break
             
-            if ac:
+            if route_activate:
                 print(f"[{self.node_id}] O vídeo {video} já está a ser recebido. Não é preciso pedir ao vizinho.")
                 return
             
@@ -383,9 +384,6 @@ class Node:
             best_neigh = self.find_best_active_neighbour(video)
             
             if best_neigh:
-                # --- ALTERAÇÃO AQUI ---
-                # REMOVIDO: self.activate_route(video, best_neigh) 
-                # MOTIVO: Só ativamos quando recebermos o primeiro pacote RTP (no handle_rtp)
                 
                 #  Adicionar a uma lista de "pendentes" para evitar spam de pedidos
                 if video not in self.pending_requests:
@@ -543,6 +541,7 @@ class Node:
 
     def open_rtp_port(self):
         """Cria o socket UDP e inicia a thread de escuta."""
+
         try:
             self.rtp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.rtp_socket.bind((self.node_ip, self.rtp_port))
@@ -577,22 +576,30 @@ class Node:
 
     def handle_rtp_packet(self, raw_data, video_name, sender_ip):
         """
-        1. Ativa a rota (porque recebemos dados, o caminho é válido).
-        2. Reencaminha para quem pediu (downstream).
+        1. Verifica se alguém quer este vídeo.
+        2. Se ninguém quiser (lista vazia), IGNORA o pacote (não reativa rota).
+        3. Se houver clientes, ativa a rota e reencaminha.
         """
-        # 1. Se estava na lista de "pedidos pendentes", removemos (já chegou!)
+        
         if video_name in self.pending_requests:
              self.pending_requests.remove(video_name)
 
-        # 2. ATIVAR A ROTA (A parte mais importante!)
-        # Se estamos a receber dados do sender_ip, é porque essa rota está viva.
+        # Check Downstream
+        has_clients = False
+        if video_name in self.downstream_clients:
+            if len(self.downstream_clients[video_name]) > 0:
+                has_clients = True
+        
+        if not has_clients:
+            print(f"[{self.node_id}] Pacote órfão recebido para {video_name}. Ignorar.")
+            return 
+
+        # 2. Se temos clientes, então sim, ATIVAMOS A ROTA
         self.activate_route(video_name, sender_ip)
         
         # 3. REENCAMINHAR (Forwarding)
-        # Enviar cópia para todos os clientes que pediram este vídeo
         if video_name in self.downstream_clients:
             for client_ip in self.downstream_clients[video_name]:
-                # Envia o pacote tal e qual como chegou (rápido)
                 self.rtp_socket.sendto(raw_data, (client_ip, self.rtp_port))
 
     def activate_route(self, video, neighbor_ip):
@@ -604,6 +611,45 @@ class Node:
                         if not route["is_active"]:
                             route["is_active"] = True
                             print(f"[{self.node_id}] Rota ATIVADA para {video} via {neighbor_ip} (RTP recebido)")
+
+    def handle_teardown(self, msg):
+        sender_ip = msg.get_src()
+        payload = msg.get_payload()
+        video = payload.get("video")
+
+        print(f"[{self.node_id}] Recebido TEARDOWN de {sender_ip} para {video}")
+        if self.is_server:
+            self.server.stop_stream_to_client(sender_ip)
+        
+        # Remove client from distribution list
+        if video in self.downstream_clients:
+            if sender_ip in self.downstream_clients[video]:
+                self.downstream_clients[video].remove(sender_ip)
+                print(f"[{self.node_id}] Cliente {sender_ip} removido da lista de {video}.")
+
+            # Check if theres another client
+            if len(self.downstream_clients[video]) == 0:
+                print(f"[{self.node_id}] Último cliente saiu. A fechar a rota para {video}...")
+                
+                if video in self.routing_table:
+                    best_route = None
+                    for route in self.routing_table[video]:
+                        if route["is_active"]:
+                            # Marcamos como INATIVO
+                            route["is_active"] = False
+                            best_route = route["next_hop"]
+                            
+                            if best_route:
+                                print(f"[{self.node_id}] A enviar TEARDOWN para cima ({best_route}).")
+                                forward_msg = Message(
+                                    msg_type=MsgType.TEARDOWN,
+                                    srcip=self.node_ip,
+                                    destip=best_route,
+                                    payload={"video": video}
+                                )
+                                self.send_tcp_message(best_route, forward_msg)
+            else:
+                print(f"[{self.node_id}] Ainda restam {len(self.downstream_clients[video])} clientes. A rota mantém-se ATIVA.")
 
 
 # ------------------------------------------------------------------

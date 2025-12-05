@@ -28,22 +28,21 @@ class ControlClient():
         # --- Configuração RTP (UDP) ---
         self.RTPport = NODE_RTP_PORT 
         self.rtp_socket = None
-        self.video = video # O video que queremos ver
+        self.video = video 
         self.sessionId = 0
         self.frameNbr = 0
         
-        # Estado da Rede
         self.neighbors = {} 
         self.last_alive = {} 
         self.fail_count = {} 
         
-        # 1. Registar e obter vizinhos
+        #  Registar e obter vizinhos
         self.register_and_join() 
         
-        # 2. Iniciar Listener TCP (Control)
+        #  Iniciar Listener TCP (Control)
         threading.Thread(target=self.listener_tcp, daemon=True).start()
 
-        # 3. Iniciar Listener UDP (RTP/Video)
+        # Iniciar Listener UDP (RTP/Video)
         self.open_rtp_port()
 
     # -------------------------------------------------------------------------
@@ -177,6 +176,28 @@ class ControlClient():
             for neigh, is_active in list(self.neighbors.items()):
                 if is_active:
                     self.send_tcp_message(neigh, Message.create_alive_message(self.node_ip, neigh))
+    
+    def stop_stream(self):
+        """Envia pedido para parar o stream antes de sair."""
+        if not self.video:
+            return
+
+        
+        gateway_ip = None
+        for ip, active in self.neighbors.items():
+            if active:
+                gateway_ip = ip
+                break
+        
+        if gateway_ip:
+            print(f"[Cliente] A enviar TEARDOWN para {gateway_ip}...")
+            msg = Message(
+                msg_type=MsgType.TEARDOWN, 
+                srcip=self.node_ip, 
+                destip=gateway_ip,
+                payload={"video": self.video}
+            )
+            self.send_tcp_message(gateway_ip, msg)
 
 if __name__ == "__main__":    
     if len(sys.argv) < 4:

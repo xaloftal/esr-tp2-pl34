@@ -14,6 +14,7 @@ from control_client import ControlClient
 from config import NODE_TCP_PORT, BOOTSTRAPPER_PORT, NODE_RTP_PORT, HEARTBEAT_INTERVAL, FAIL_TIMEOUT, MAX_FAILS
 # Import Message class
 from aux_files.aux_message import Message, MsgType
+from aux_files.RtpPacket import RtpPacket
 
 
 class Node:
@@ -35,6 +36,13 @@ class Node:
         self.network_ready = False
         self.bootstrapper_ip = bootstrapper_ip
         self.video = video
+        self.downstream_clients = {} # 
+        self.pending_requests = [] # Lista de vídeos que já pedimos mas ainda não chegaram
+        self.rtp_port = NODE_RTP_PORT
+        self.open_rtp_port()
+        
+       
+        
          
         # --- Flag de Servidor ---
         self.is_server = is_server        
@@ -55,13 +63,15 @@ class Node:
         )
         
         # --- Estado da Etapa 2: Rotas ---
-        # {video: [{"next_hop": ip, "metric": (hop_count, latency_ms), "is_active": bool}, ...]}
+        #print(json.dumps(node.routing_table, indent=4))
         self.routing_table = {} 
         self.flood_cache = set() # Evita loops de flood
         self.lock = threading.Lock() 
         
         self.ping_cache = set()      # ping unique ids already seen
         self.ping_reverse_path = {}  # ping_id -> previous_hop_ip   
+        self.last_flood_timestamp = {}   # {video: {src_ip: last_ts}} guarda o ultimo timestamp de flood vindo do mesmo vizinho
+        self.packet_loss_stats = {}   # {video: {src_ip: {"expected": X, "received": Y}}}
 
         
         
@@ -314,6 +324,10 @@ class Node:
                 )
                 self.send_tcp_message(next_hop, reply)
                 print(f"[{self.node_id}] Reencaminhei PONG para {next_hop}")
+            
+        elif msg_type == MsgType.TEARDOWN:
+            self.handle_teardown(msg)
+        
         else:
             print(f"[{self.node_id}] Tipo de mensagem desconhecido: {msg_type}")
             
@@ -324,65 +338,96 @@ class Node:
     # ------------------------------------------------------------------
     def handle_flood_message(self, msg):
         """
-        Processa mensagens de FLOOD.
-        1. Atualiza tabela de rotas (sempre).
-        2. Decide se reenvia (apenas se for novo).
+        Processa mensagens de FLOOD:
+        - Atualiza rotas
+        - Calcula métricas (latência, jitter, perdas)
+        - Reenvia se não visto antes
         """
-        src_ip = msg.get_src() if isinstance(msg, Message) else msg.get("srcip")
-        msg_id = msg.id if isinstance(msg, Message) else msg.get("msg_id")
-        payload = msg.get_payload() if isinstance(msg, Message) else msg.get("payload", {})
+
+        src_ip = msg.get_src()
+        msg_id = msg.id
+        payload = msg.get_payload()
 
         hop_count = payload.get("hop_count", 0)
-        video = payload.get("video", None)
+        video = payload.get("video")
         start_ts = payload.get("start_timestamp", time.time())
-        current_latency = (time.time() - start_ts) * 1000
-        
         origin_ip = payload.get("origin_ip", src_ip)
 
+        # ------------------ LATÊNCIA ------------------
+        current_latency = (time.time() - start_ts) * 1000  # ms
 
+        # ------------------ JITTER ------------------
+        # Criar estruturas se não existirem
+        if video not in self.last_flood_timestamp:
+            self.last_flood_timestamp[video] = {}
+
+        old_ts = self.last_flood_timestamp[video].get(src_ip, None)
+
+        if old_ts is None:
+            jitter = 0
+        else:
+            jitter = abs(current_latency - old_ts)
+
+        # guardar timestamp para próximo cálculo
+        self.last_flood_timestamp[video][src_ip] = current_latency
+
+        # ------------------ PERDAS (PACKET LOSS) ------------------
+        # Procurar estatísticas anteriores (se existirem)
+        if video not in self.packet_loss_stats:
+            self.packet_loss_stats[video] = {}
+
+        stats = self.packet_loss_stats[video].get(src_ip, {"expected": 1, "received": 1})
+
+        loss_rate = 1 - (stats["received"] / max(stats["expected"], 1))
+
+        # ------------------ SCORE UNIFICADO ------------------
+        α = 50      # hops
+        β = 1       # latência
+        γ = 0.5     # jitter
+        δ = 300     # perdas %
+
+        score = hop_count*α + current_latency*β + jitter*γ + loss_rate*δ
+
+        # ------------------ ATUALIZAR TABELA DE ROTAS ------------------
         if src_ip != self.node_ip and video:
-            with self.lock: 
-                new_route = {
-                    "next_hop": src_ip,
-                    "metric": (hop_count, current_latency),
-                    "is_active": False
-                }
+
+            new_route = {
+                "next_hop": src_ip,
+                "hop": hop_count,
+                "latency": current_latency,
+                "jitter": jitter,
+                "loss": loss_rate,
+                "score": score,
+                "is_active": False
+            }
+
+            with self.lock:
 
                 if video not in self.routing_table:
                     self.routing_table[video] = [new_route]
-                    print(f"[{self.node_id}] Nova rota stream {video}: via {src_ip}")
+                    print(f"[{self.node_id}] Nova rota {video}: via {src_ip}")
                 else:
-                    existing_route = None
-                    for route in self.routing_table[video]:
-                        if route["next_hop"] == src_ip:
-                            existing_route = route
-                            break
-                    
-                    if existing_route:
-                        # Atualiza métricas do vizinho existente
-                        old_hop, old_lat = existing_route["metric"]
-                        new_hop, new_lat = new_route["metric"]
-                        
-                        if new_hop < old_hop or (new_hop == old_hop and new_lat < old_lat):
-                            existing_route["metric"] = (new_hop, new_lat)
-                            existing_route["is_active"] = True
-                            print(f"[{self.node_id}]  Rota MELHORADA {video} via {src_ip}")
+                    # Ver se rota já existe
+                    existing = next((r for r in self.routing_table[video] if r["next_hop"] == src_ip), None)
+
+                    if existing:
+                        # Atualiza SE MELHOR score
+                        if new_route["score"] < existing["score"]:
+                            existing.update(new_route)
+                            print(f"[{self.node_id}] Rota Melhorada {video}: via {src_ip}")
                     else:
                         self.routing_table[video].append(new_route)
-                        print(f"[{self.node_id}]  Nova rota alternativa {video}: via {src_ip}")
+                        print(f"[{self.node_id}] Rota Extra {video}: via {src_ip}")
 
-        # FASE 2: CONTROLO DE FLOOD (Executa APENAS UMA VEZ por ID)
-        
+        # ------------------ CACHE e REBROADCAST ------------------
         key = (origin_ip, msg_id)
 
         with self.lock:
             if key in self.flood_cache:
-                return  # Já reenviei isto antes, não faço broadcast storm
-            
-            # Marca como visto para não reenviar novamente
+                return
             self.flood_cache.add(key)
 
-        # ------------------ 6. Criar mensagem atualizada ------------------
+        # criar nova mensagem
         new_msg = Message.create_flood_message(
             srcip=self.node_ip,
             origin_flood=origin_ip,
@@ -392,10 +437,11 @@ class Node:
             start_timestamp=start_ts
         )
 
-        # ------------------ 7. Reenviar para vizinhos ------------------
+        # reenviar
         for neigh, is_active in self.neighbors.items():
-            if neigh != src_ip: 
+            if neigh != src_ip:
                 self.send_tcp_message(neigh, new_msg)
+
                 
     def announce_leave(self):
         """
@@ -468,7 +514,7 @@ class Node:
             for video, routes in self.routing_table.items():
                 for route in routes:
                     if route["next_hop"] == neigh_ip:
-                        route["is_active"] = True
+                        route["is_active"] = False
                         print(f"[{self.node_id}] Rota reativada por JOIN: {video} via {neigh_ip}")
 
 
@@ -476,41 +522,72 @@ class Node:
     def handle_stream_start(self, msg):
         msg_sender = msg.get_src() if isinstance(msg, Message) else msg.get("srcip")
         msg_payload = msg.get_payload() if isinstance(msg, Message) else msg.get("payload", {})
-        msg_video = msg_payload.get("video", None)
+        video = msg_payload.get("video", None)
         
+        # --- SERVER LOGIC ---
         if self.is_server:
             if msg_video == self.server.video:
                 print(f"[{self.node_id}] Pedido de stream {msg_video} recebido de {msg_sender}. A iniciar envio...")
                 self.server.start_stream_to_client(msg_sender, msg_video)
             
+            if video in self.server.video:
+                print(f"[{self.node_id}] Pedido de stream {video} recebido de {msg_sender}. A iniciar envio...")
+                self.server.start_stream_to_client(msg_sender, video)
             else:
-                print(f"[{self.node_id}] Pedido de stream {msg_video} recebido de {msg_sender}, mas vídeo não disponível.")
+                print(f"[{self.node_id}] Pedido de stream {video} recebido de {msg_sender}, mas vídeo não disponível.")
                 
+        # --- ROUTER LOGIC ---
         else:
-            print(f"[{self.node_id}] Pedido de stream START recebido de {msg_sender} para vídeo {msg_video}, mas não sou servidor.")
+            
+            print(f"[{self.node_id}] Pedido de stream START recebido de {msg_sender} para vídeo {video}.")
+            
+            # 1. Add clients to the downstream
+            if video not in self.downstream_clients:
+                self.downstream_clients[video] = []
+            if msg_sender not in self.downstream_clients[video]:
+                self.downstream_clients[video].append(msg_sender)
+                print(f"[{self.node_id}] Cliente {msg_sender} adicionado à lista de distribuição de {video}.")
 
-            if msg_video not in self.routing_table:
-                print(f"[{self.node_id}] Nenhuma rota conhecida para o vídeo {msg_video}.")
+            # 2. Verificar se a rota JÁ está ativa (Stream já a correr)
+            route_activate = False
+            if video in self.routing_table:
+                for route in self.routing_table[video]:
+                    if route["is_active"]:
+                        route_activate = True
+                        break
+            
+            if route_activate:
+                print(f"[{self.node_id}] O vídeo {video} já está a ser recebido. Não é preciso pedir ao vizinho.")
                 return
-
-            best_neigh = self.find_best_active_neighbour(msg_video)
-
+            
+            # 3. Verificar se temos rota para pedir
+            if video not in self.routing_table:
+                print(f"[{self.node_id}] Nenhuma rota conhecida para o vídeo {video}.")
+                return
+            
+            best_neigh = self.find_best_active_neighbour(video)
+            
             if best_neigh:
-                print(f"[{self.node_id}] A reenviar pedido de stream START para {best_neigh} para vídeo {msg_video}.")
+                
+                #  Adicionar a uma lista de "pendentes" para evitar spam de pedidos
+                if video not in self.pending_requests:
+                   self.pending_requests.append(video)
 
+                print(f"[{self.node_id}] A reenviar pedido de stream START para {best_neigh} para vídeo {video}.")
+                
                 forward_msg = Message.create_stream_start_message(
                     srcip=self.node_ip,
                     destip=best_neigh,
-                    video=msg_video
+                    video=video
                 )
 
                 self.send_tcp_message(best_neigh, forward_msg)
 
             else:
-                print(f"[{self.node_id}] Nenhum vizinho encontrado para reenviar pedido de stream START para vídeo {msg_video}.")
+                print(f"[{self.node_id}] Nenhum vizinho encontrado para reenviar pedido de stream START para vídeo {video}.") 
+             
 
                
-     # a minha ideia é passar esta para o cliente, já que é uma função só, mas era preciso alguma marosca para mandar aquele find_best_neighbour junto     
     def stream_start_handler(self, video):
         if video not in self.routing_table:
             print(f"[{self.node_id}] Nenhuma rota conhecida para o vídeo {video}.")
@@ -526,10 +603,6 @@ class Node:
                 destip=best_neigh,
                 video=video
             )
-
-            # envia através do control client
-            #self.client.send_tcp_message(best_neigh, start_msg)
-            #é o Node que sabe enviar mensagens TCP, não o cliente.
             self.send_tcp_message(best_neigh, start_msg)
         else:
             print(f"[{self.node_id}] Nenhum vizinho ativo encontrado para o vídeo {video}.")
@@ -621,24 +694,154 @@ class Node:
 
                     
     def find_best_active_neighbour(self, video):
-        """Escolhe o vizinho ativo com a melhor métrica para um determinado vídeo."""
+        """
+        Escolhe o vizinho ativo com a melhor métrica para um determinado vídeo.
+        NOTA: Não verificamos route['is_active'] aqui, porque estamos a tentar
+        iniciar a stream. Apenas verificamos se o VIZINHO está online.
+        """
         if video not in self.routing_table:
             return None
-        
-        best_route = None
-        best_metric = (999999, 999999999)  # (hop_count, latency)
-        
-        for route in self.routing_table[video]:
-            next_hop = route["next_hop"]
-            hop_count, latency = route["metric"]
-            is_active = route["is_active"]
+
+        active_routes = [
+            r for r in self.routing_table[video]
+            if self.neighbors.get(r["next_hop"], False)
+        ]
+
+        if not active_routes:
+            return None
+
+        best = min(active_routes, key=lambda r: r["score"])
+        return best["next_hop"]
+
+    def open_rtp_port(self):
+        """Cria o socket UDP e inicia a thread de escuta."""
+
+        try:
+            self.rtp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.rtp_socket.bind((self.node_ip, self.rtp_port))
             
-            # Apenas rotas ativas e com vizinho ativo
-            if is_active and self.neighbors.get(next_hop, False):
-                # Comparar métricas (hop_count primeiro, depois latency)
-                if (hop_count < best_metric[0]) or (hop_count == best_metric[0] and latency < best_metric[1]):
-                    best_metric = (hop_count, latency)
-                    best_route = next_hop
+            print(f"[{self.node_id}] À escuta de RTP (UDP) no {self.node_ip}:{self.rtp_port}")
+
+            # Thread para não bloquear o resto do programa
+            threading.Thread(target=self.listen_rtp_thread, daemon=True).start()
+        except Exception as e:
+            print(f"[{self.node_id}] Erro ao abrir socket RTP: {e}")
+
+    def listen_rtp_thread(self):
+        """Loop que recebe pacotes UDP continuamente."""
+        while True:
+            try:
+                # Recebe dados brutos (bytes) e endereço do remetente
+                data, address = self.rtp_socket.recvfrom(20480)
+                
+                if data:
+                    sender_ip = address[0]
+                    
+                    # NOTA: Num sistema real, o nome do vídeo viria no pacote.
+                    # Aqui, assumimos que é o vídeo que este nó está configurp«´'+do para gerir
+                    # ou terias de ter lógica para extrair do header RTP.
+                    current_video = self.video if self.video else "movie.Mjpeg"
+
+                    self.handle_rtp_packet(data, current_video, sender_ip)
+
+            except Exception as e:
+                print(f"[{self.node_id}] Erro na thread RTP: {e}")
+                break
+
+    def handle_rtp_packet(self, raw_data, video_name, sender_ip):
+        """
+        1. Verifica se alguém quer este vídeo.
+        2. Se ninguém quiser → IGNORA.
+        3. Se houver clientes → ativa rota + forward.
+        """
+
+        # --------------------------------------------------------------
+        # 0. Decodificar pacote RTP
+        # --------------------------------------------------------------
+        rtp = RtpPacket()
+        rtp.decode(raw_data)
+        current_seq = rtp.seqNum()
+
+        # --------------------------------------------------------------
+        # 1. Atualizar estatísticas de packet loss
+        # --------------------------------------------------------------
+        if video_name not in self.packet_loss_stats:
+            self.packet_loss_stats[video_name] = {}
+
+        if sender_ip not in self.packet_loss_stats[video_name]:
+            # Primeiro pacote — inicializar
+            self.packet_loss_stats[video_name][sender_ip] = {
+                "expected": 1,
+                "received": 1,
+                "last_seq": current_seq
+            }
+        else:
+            stats = self.packet_loss_stats[video_name][sender_ip]
+            last_seq = stats["last_seq"]
+
+            if current_seq > last_seq:
+                missing = current_seq - last_seq - 1
+                if missing < 0:
+                    missing = 0
+                stats["expected"] += 1 + missing
+                stats["received"] += 1
+                stats["last_seq"] = current_seq
+            else:
+                # duplicado, fora de ordem, etc.
+                stats["expected"] += 1
+
+        # --------------------------------------------------------------
+        # 2. Pending cleanup
+        # --------------------------------------------------------------
+        if video_name in self.pending_requests:
+            self.pending_requests.remove(video_name)
+
+        # --------------------------------------------------------------
+        # 3. Verificar se alguém quer o vídeo
+        # --------------------------------------------------------------
+        has_clients = (
+            video_name in self.downstream_clients and
+            len(self.downstream_clients[video_name]) > 0
+        )
+
+        if not has_clients:
+            print(f"[{self.node_id}] Pacote órfão recebido para {video_name}. Ignorar.")
+            return
+
+        # --------------------------------------------------------------
+        # 4. Ativar rota (porque recebemos RTP válido)
+        # --------------------------------------------------------------
+        self.activate_route(video_name, sender_ip)
+
+        # --------------------------------------------------------------
+        # 5. Forwarding para os clientes downstream
+        # --------------------------------------------------------------
+        for client_ip in self.downstream_clients[video_name]:
+            self.rtp_socket.sendto(raw_data, (client_ip, self.rtp_port))
+
+    def activate_route(self, video, neighbor_ip):
+        """Marca a rota como ativa **apenas se o vizinho estiver ativo**."""
+
+        # Se o vizinho estiver inativo → NÃO ativa rota
+        if not self.neighbors.get(neighbor_ip, False):
+            return
+
+        if video in self.routing_table:
+            with self.lock:
+                for route in self.routing_table[video]:
+                    if route["next_hop"] == neighbor_ip:
+                        if not route["is_active"]:
+                            route["is_active"] = True
+                            print(f"[{self.node_id}] Rota ATIVADA para {video} via {neighbor_ip} (RTP recebido)")
+
+    def handle_teardown(self, msg):
+        sender_ip = msg.get_src()
+        payload = msg.get_payload()
+        video = payload.get("video")
+
+        print(f"[{self.node_id}] Recebido TEARDOWN de {sender_ip} para {video}")
+        if self.is_server:
+            self.server.stop_stream_to_client(sender_ip)
         
         return best_route
 
@@ -649,7 +852,35 @@ class Node:
                 return neigh
         return None
 
+        # Remove client from distribution list
+        if video in self.downstream_clients:
+            if sender_ip in self.downstream_clients[video]:
+                self.downstream_clients[video].remove(sender_ip)
+                print(f"[{self.node_id}] Cliente {sender_ip} removido da lista de {video}.")
 
+            # Check if theres another client
+            if len(self.downstream_clients[video]) == 0:
+                print(f"[{self.node_id}] Último cliente saiu. A fechar a rota para {video}...")
+                
+                if video in self.routing_table:
+                    best_route = None
+                    for route in self.routing_table[video]:
+                        if route["is_active"]:
+                            # Marcamos como INATIVO
+                            route["is_active"] = False
+                            best_route = route["next_hop"]
+                            
+                            if best_route:
+                                print(f"[{self.node_id}] A enviar TEARDOWN para cima ({best_route}).")
+                                forward_msg = Message(
+                                    msg_type=MsgType.TEARDOWN,
+                                    srcip=self.node_ip,
+                                    destip=best_route,
+                                    payload={"video": video}
+                                )
+                                self.send_tcp_message(best_route, forward_msg)
+            else:
+                print(f"[{self.node_id}] Ainda restam {len(self.downstream_clients[video])} clientes. A rota mantém-se ATIVA.")
 
 
 # ------------------------------------------------------------------
@@ -695,8 +926,8 @@ if __name__ == "__main__":
                     print("Erro: Apenas o servidor pode iniciar um 'flood'.")
                     
             elif cmd == "routes":
-                print(f"[{node.node_id}] Tabela de Rotas (video: [{{\"next_hop\": ip, \"metric\": (hop_count, latency_ms), \"is_active\": bool}}, ...]):")
-                print(node.routing_table)
+                print(f"[{node.node_id}] Tabela de Rotas:")
+                print(json.dumps(node.routing_table, indent=4))
 
             elif cmd == "neigh":
                 print(f"[{node.node_id}] Vizinhos: {node.neighbors}")

@@ -15,7 +15,6 @@ from config import NODE_TCP_PORT, BOOTSTRAPPER_PORT, NODE_RTP_PORT, HEARTBEAT_IN
 # Import Message class
 from aux_files.aux_message import Message, MsgType
 from aux_files.RtpPacket import RtpPacket
-from aux_files.video_mapping import VideoMapper
 from aux_files.colors import Colors, topology_log, flood_log, stream_log, rtp_log, error_log, warning_log, route_log, rtp_forward_log
 
 class Node:
@@ -41,17 +40,6 @@ class Node:
         self.pending_requests = [] # Lista de vídeos que já pedimos mas ainda não chegaram
         self.rtp_port = NODE_RTP_PORT
         self.open_rtp_port()
-
-        # --- Video Mapping for RTP SSRC identification ---
-        self.video_mapper = VideoMapper()
-        if video:
-            # Register this node's video in the mapper
-            if isinstance(video, dict):
-                for vid_name in video.keys():
-                    self.video_mapper.register_video(vid_name)
-            else:
-                self.video_mapper.register_video(video)
-        # ---------------------------------------------------
 
         # --- NOVO: Variáveis para Detecção de Silêncio RTP ---
         self.last_rtp_time = {} # {video: timestamp}
@@ -426,9 +414,6 @@ class Node:
 
         # ------------------ ATUALIZAR TABELA DE ROTAS ------------------
         if src_ip != self.node_ip and video:
-            
-            # Register video in mapper for SSRC lookups
-            self.video_mapper.register_video(video)
 
             new_route = {
                 "next_hop": src_ip,
@@ -700,6 +685,15 @@ class Node:
 
                 print(stream_log(f"[{self.node_id}] A reenviar pedido de stream START para {best_neigh} para vídeo {video}."))
                 
+                # Ativar a rota para este vizinho com lock
+                with self.lock:
+                    if video in self.routing_table:
+                        for route in self.routing_table[video]:
+                            if route["next_hop"] == best_neigh:
+                                route["is_active"] = True
+                                print(route_log(f"[{self.node_id}] Rota ATIVADA para '{video}' via {best_neigh} (STREAM_START enviado)"))
+                                break
+                
                 forward_msg = Message.create_stream_start_message(
                     srcip=self.node_ip,
                     destip=best_neigh,
@@ -906,32 +900,16 @@ class Node:
                 if data:
                     sender_ip = address[0]
                     
-                    # Extract video name from RTP packet SSRC field
+                    # Extract video name from RTP packet payload
                     rtp = RtpPacket()
                     rtp.decode(data)
-                    ssrc = rtp.ssrc()
+                    video_name = rtp.getVideoName()
                     
-                    # Map SSRC back to video name
-                    current_video = self.video_mapper.get_video_name(ssrc)
-                    
-                    # If not in mapper, we need to learn it from context
-                    if not current_video:
-                        # Check if we have any active stream requests that might match
-                        # by looking at downstream_clients
-                        possible_videos = list(self.downstream_clients.keys())
-                        
-                        if len(possible_videos) == 1:
-                            # Only one video being requested - must be it!
-                            current_video = possible_videos[0]
-                            # Register it now with this SSRC
-                            with self.lock:
-                                self.video_mapper.ssrc_to_name[ssrc] = current_video
-                                self.video_mapper.name_to_ssrc[current_video] = ssrc
-                        else:
-                            # Multiple videos or none - create temp name
-                            current_video = f"video_ssrc_{ssrc}"
+                    if not video_name:
+                        print(error_log(f"[{self.node_id}] RTP packet sem nome de vídeo. Ignorar."))
+                        continue
 
-                    self.handle_rtp_packet(data, current_video, sender_ip)
+                    self.handle_rtp_packet(data, video_name, sender_ip)
 
             except Exception as e:
                 print(error_log(f"[{self.node_id}] Erro na thread RTP: {e}"))
@@ -942,9 +920,9 @@ class Node:
 
     def handle_rtp_packet(self, raw_data, video_name, sender_ip):
         """
-        1. Verifica se alguém quer este vídeo.
-        2. Se ninguém quiser → IGNORA.
-        3. Se houver clientes → ativa rota + forward.
+        1. Verifica se tem rota ativa para este vídeo.
+        2. Se tiver → forward para o vizinho na rota ativa.
+        3. Atualiza estatísticas e timer.
         """
         
         # Safety check - video_name should never be None
@@ -988,13 +966,70 @@ class Node:
                 stats["expected"] += 1
 
         # --------------------------------------------------------------
-        # 2. Pending cleanup
+        # 2. Atualizar o timer RTP
+        # --------------------------------------------------------------
+        if hasattr(self, 'last_rtp_time'):
+            self.last_rtp_time[video_name] = time.time()
+
+        # --------------------------------------------------------------
+        # 3. Pending cleanup
         # --------------------------------------------------------------
         if video_name in self.pending_requests:
             self.pending_requests.remove(video_name)
 
         # --------------------------------------------------------------
-        # 3. Verificar se alguém quer o vídeo
+        # 4. Verificar se temos rota ativa para este vídeo
+        # --------------------------------------------------------------
+        active_route = None
+        if video_name in self.routing_table:
+            for route in self.routing_table[video_name]:
+                if route["is_active"] and route["next_hop"] == sender_ip:
+                    active_route = route
+                    break
+        
+        # Se não temos rota ativa deste sender, ignorar
+        if not active_route:
+            # Log com detalhes sobre rotas disponíveis para debug
+            routes_info = ""
+            if video_name in self.routing_table:
+                routes_info = f" Rotas: {[(r['next_hop'], r['is_active']) for r in self.routing_table[video_name]]}"
+            
+            # Verificar se este pacote é órfão (chegou sem pedido)
+            if not hasattr(self, 'orphan_count'):
+                self.orphan_count = {}
+            
+            key = (video_name, sender_ip)
+            if key not in self.orphan_count:
+                self.orphan_count[key] = 0
+            
+            self.orphan_count[key] += 1
+            
+            if self.orphan_count[key] <= 3:  # Log apenas as primeiras vezes
+                print(warning_log(f"[{self.node_id}] Pacote RTP para '{video_name}' seq={current_seq} de {sender_ip} sem rota ativa. Ignorar.{routes_info}"))
+            
+            # Se receber muitos pacotes órfãos, enviar TEARDOWN
+            if self.orphan_count[key] > 10: 
+                print(warning_log(f"[{self.node_id}] ATENÇÃO: Limite de órfãos atingido. A forçar TEARDOWN para {sender_ip}."))
+                
+                teardown_msg = Message.create_teardown_message(
+                    srcip=self.node_ip, 
+                    destip=sender_ip,
+                    video=video_name
+                )
+                self.send_tcp_message(sender_ip, teardown_msg)
+                
+                self.orphan_count[key] = 0 
+            
+            return
+
+        # Reset orphan counter on valid packet
+        if hasattr(self, 'orphan_count'):
+            key = (video_name, sender_ip)
+            if key in self.orphan_count:
+                self.orphan_count[key] = 0
+
+        # --------------------------------------------------------------
+        # 5. Verificar se alguém quer o vídeo downstream
         # --------------------------------------------------------------
         has_clients = (
             video_name in self.downstream_clients and
@@ -1002,52 +1037,40 @@ class Node:
         )
 
         if not has_clients:
-            # Novo Mecanismo de Limpeza FORÇADA (apenas para reinícios)
-            if not hasattr(self, 'orphan_count'):
-                self.orphan_count = {}
+            # Ninguém quer este vídeo, mas temos rota ativa
+            # Isto pode acontecer se o último cliente saiu mas ainda estamos a receber RTP
+            print(warning_log(f"[{self.node_id}] RTP recebido para '{video_name}' mas sem clientes downstream. Enviar TEARDOWN para {sender_ip}."))
             
-            self.orphan_count[video_name] = self.orphan_count.get(video_name, 0) + 1
+            # Desativar rota
+            active_route["is_active"] = False
             
-            print(warning_log(f"[{self.node_id}] Pacote órfão recebido para {video_name}. Ignorar."))
-            
-            # Se receber muitos pacotes órfãos (ex: 10), envia TEARDOWN forçado para o upstream.
-            if self.orphan_count[video_name] > 10: 
-                print(warning_log(f"[{self.node_id}] ATENÇÃO: Limite de órfãos atingido. A forçar TEARDOWN para {sender_ip}."))
-                
-                # Enviar TEARDOWN para o nó que está a enviar o RTP (o Streamer, neste caso, 10.0.19.10)
-                teardown_msg = Message.create_teardown_message(
-                    srcip=self.node_ip, 
-                    destip=sender_ip, # IP do Streamer
-                    video=video_name
-                )
-                self.send_tcp_message(sender_ip, teardown_msg)
-                
-                # Reset do contador
-                self.orphan_count[video_name] = 0 
-                return
-            
-            return # Não faz forward, ignora o pacote
+            # Enviar TEARDOWN ao upstream
+            teardown_msg = Message.create_teardown_message(
+                srcip=self.node_ip, 
+                destip=sender_ip,
+                video=video_name
+            )
+            self.send_tcp_message(sender_ip, teardown_msg)
+            return
 
         # --------------------------------------------------------------
-        # 4. Ativar rota (porque recebemos RTP válido)
-        # --------------------------------------------------------------
-        self.activate_route(video_name, sender_ip)
-        
-        # --- NOVO: ATUALIZAR O TIMER RTP APÓS RECEÇÃO VÁLIDA ---
-        # Isto é a base para o Mecanismo B (check_rtp_silence)
-        if hasattr(self, 'last_rtp_time'):
-            self.last_rtp_time[video_name] = time.time()
-        # -------------------------------------------------------
-
-        # --------------------------------------------------------------
-        # 5. Forwarding para os clientes downstream
+        # 6. Forwarding para os clientes downstream
         # --------------------------------------------------------------
         num_clients = len(self.downstream_clients[video_name])
         client_ips = list(self.downstream_clients[video_name])
         
         # Print RTP forwarding info with stream-specific color
+        # Also log if this client appears in other video's downstream lists (debugging cross-contamination)
+        other_videos = []
+        for vid, clients in self.downstream_clients.items():
+            if vid != video_name:
+                for client_ip in client_ips:
+                    if client_ip in clients:
+                        other_videos.append(f"{client_ip} also in {vid}")
+        
+        contamination_msg = f" WARNING: {other_videos}" if other_videos else ""
         print(rtp_forward_log(video_name, 
-            f"[{self.node_id}] RTP FWD: '{video_name}' seq={current_seq} from {sender_ip} → {num_clients} client(s): {client_ips}"))
+            f"[{self.node_id}] RTP FWD: '{video_name}' seq={current_seq} from {sender_ip} → {num_clients} client(s): {client_ips}{contamination_msg}"))
         
         for client_ip in self.downstream_clients[video_name]:
             self.rtp_socket.sendto(raw_data, (client_ip, self.rtp_port))

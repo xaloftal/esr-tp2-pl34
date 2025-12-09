@@ -16,6 +16,8 @@ class MsgType:
     STREAM_END = "STREAM_END"
     REGISTER = "REGISTER"
     NEIGHBOUR = "NEIGHBOUR"
+    PING = "PING"
+    PONG = "PONG"
     TEARDOWN = "TEARDOWN"
     
     # Data messages (UDP)
@@ -67,7 +69,7 @@ class Message:
             "destip": self.destip,
             "timestamp": self.timestamp,
             "payload": self.payload
-        }
+    }
     
     def to_json(self):
         """Converte a mensagem para string JSON."""
@@ -283,6 +285,24 @@ class Message:
                 "neighbours": neighbours_ip
             }
         )
+
+    # envio e rececao de mensagens PING/PONG
+    @classmethod
+    def create_ping_message(cls, srcip, destip):
+        return cls(
+            msg_type=MsgType.PING,
+            srcip=srcip,
+            destip=destip
+        )
+
+    @classmethod
+    def create_pong_message(cls, srcip, destip):
+        return cls(
+            msg_type=MsgType.PONG,
+            srcip=srcip,
+            destip=destip
+        )
+
 
 
 # Backward compatibility functions

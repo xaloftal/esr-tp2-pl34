@@ -24,6 +24,13 @@ class ControlClient():
         self.node_ip = node_ip
         self.bootstrapper_ip = bootstrapper_ip
         self.TCPport = NODE_TCP_PORT
+        self.UDPport = NODE_RTP_PORT
+        self.RTPport = NODE_RTP_PORT
+        self.rtspSeq = 0
+        self.frameNbr = 0
+        self.neighbors = {}
+        self.register_and_join()  # vizinhos ativos
+        self.gui_callback = None
         
         # --- Configuração RTP (UDP) ---
         self.RTPport = NODE_RTP_PORT 
@@ -168,6 +175,14 @@ class ControlClient():
         elif msg_type == MsgType.JOIN:
             self.neighbors[sender_ip] = True
         elif msg_type == MsgType.LEAVE:
+            print(f"[Cliente] Recebido LEAVE de {sender_ip}")
+            if sender_ip in self.neighbors:
+                self.neighbors[sender_ip] = False
+        elif msg_type == MsgType.PONG:
+            print(f"[Cliente] Recebi PONG de {sender_ip}")
+            if hasattr(self, "gui_callback") and self.gui_callback:
+                self.gui_callback("PONG RECEBIDO")
+    
             if sender_ip in self.neighbors: self.neighbors[sender_ip] = False
 
     def heartbeat(self):
@@ -213,6 +228,17 @@ if __name__ == "__main__":
     
     threading.Thread(target=client.heartbeat, daemon=True).start()
     
+    # 👉 INICIAR LISTENER TCP (FUNDAMENTAL)
+    listener_thread = threading.Thread(target=client.listener_tcp, daemon=True)
+    listener_thread.start()
+    
+    # Criar GUI
+    root = Tk()
+    app = ClienteGUI(root, client)
+    root.title(f"Cliente RTP - {node_id}")
+
+
+    root.mainloop()
     # Inicia a GUI
     root = Tk()
     app = ClienteGUI(root, client)

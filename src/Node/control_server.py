@@ -21,6 +21,7 @@ class ControlServer:
     def _run_server(self):
         try:
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self.server_socket.bind(("0.0.0.0", self.TCPport))
             self.server_socket.listen()
             print(f"[Servidor] A escutar em {self.host_ip}:{self.TCPport}")
@@ -66,7 +67,9 @@ class ControlServer:
             self.active_streams[client_ip].stop()
             del self.active_streams[client_ip]
     
+        # CRITICAL: Pass video_name for SSRC, not video_path
         rtp = RtpServer(video_file=video_path,
+                        video_name=video_name,
                         client_ip=client_ip,
                         client_port=self.UDPport)
         rtp.start()

@@ -56,6 +56,11 @@ class RtpPacket:
 		pt = self.header[1] & 127
 		return int(pt)
 	
+	def ssrc(self):
+		"""Return SSRC (Synchronization Source)."""
+		ssrc = self.header[8] << 24 | self.header[9] << 16 | self.header[10] << 8 | self.header[11]
+		return int(ssrc)
+	
 	def getPayload(self):
 		"""Return payload."""
 		return self.payload

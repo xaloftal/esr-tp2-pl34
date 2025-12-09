@@ -28,6 +28,7 @@ class Node:
         self.node_ip = node_ip
         self.last_alive = {}     # dicionário: {ip : timestamp}
         self.fail_count = {}     # dicionário: {ip : nº de falhas}
+        self.last_hop = {}      # dicionário: {ip : last_hop_ip}
         self.leave_cache = set()
         self.join_cache = set()
         self.flood_cache = set()
@@ -70,6 +71,9 @@ class Node:
         self.routing_table = {} 
         self.flood_cache = set() # Evita loops de flood
         self.lock = threading.Lock() 
+        
+        self.ping_cache = set()      # ping unique ids already seen
+        self.ping_reverse_path = {}  # ping_id -> previous_hop_ip   
         self.last_flood_timestamp = {}   # {video: {src_ip: last_ts}} guarda o ultimo timestamp de flood vindo do mesmo vizinho
         self.packet_loss_stats = {}   # {video: {src_ip: {"expected": X, "received": Y}}}
 
@@ -208,6 +212,145 @@ class Node:
             
         elif msg_type == MsgType.STREAM_START:
             self.handle_stream_start(msg)
+
+        elif msg_type == MsgType.PING:
+            print("\n" + "="*60)
+            print(f"[{self.node_id}]  RECEBI PING")
+            print(f"    → ID:        {msg.id}")
+            print(f"    → Sender:    {msg_sender}")
+            print(f"    → Origin:    {msg.get_src()}")
+            print("="*60)
+
+            # Guardar hop anterior (para rota de volta)
+            self.last_hop[msg.id] = msg_sender
+            print(f"[{self.node_id}] last_hop[{msg.id}] = {msg_sender}")
+
+            # --- Se este nó é o SERVIDOR ---
+            if self.is_server:
+                pong = Message.create_pong_message(
+                    srcip=self.node_ip,
+                    destip=msg.get_src()     # o cliente final
+                )
+                pong.id = msg.id
+
+                prev_hop = self.last_hop[msg.id]   # nó imediatamente anterior na rota de ida
+
+                print(f"[{self.node_id}] Envio PONG para hop anterior {prev_hop}")
+                self.send_tcp_message(prev_hop, pong)
+                return
+
+            # --- Este nó é intermédio ---
+            # Reencaminhar PING para qualquer vizinho ativo, exceto quem o enviou
+            for neigh, active in self.neighbors.items():
+                if active and neigh != msg_sender:
+                    print(f"[{self.node_id}] Forward PING {msg.id} → {neigh}")
+                    self.send_tcp_message(neigh, msg)
+                    return
+
+            print(f"[{self.node_id}] Sem vizinho para reenviar PING")
+
+
+        elif msg_type == MsgType.PONG:
+            print("\n" + "-"*60)
+            print(f"[{self.node_id}]  RECEBI PONG")
+            print(f"    → ID:        {msg.id}")
+            print(f"    → Sender:    {msg_sender}")
+            print(f"    → Origin:    {msg.get_src()}")
+            print("-"*60)
+
+            # Guardar hop anterior também NA VOLTA
+            self.last_hop[msg.id] = msg_sender
+            print(f"[{self.node_id}] updated last_hop[{msg.id}] = {msg_sender}")
+
+            # O destino FINAL (cliente) verifica se este nó é o destino final
+            if self.node_ip == msg.get_dest():
+                print(f"[{self.node_id}] 🎉 PONG chegou ao CLIENTE FINAL!")
+                return
+
+            # Descobrir hop seguinte (voltar para trás na rota)
+            prev_hop = self.last_hop.get(msg.id)
+
+            if prev_hop is None:
+                print(f"[{self.node_id}] ERRO: last_hop sem entrada para {msg.id}")
+                return
+
+            print(f"[{self.node_id}] Forward PONG {msg.id} → {prev_hop}")
+            self.send_tcp_message(prev_hop, msg)
+
+        elif msg_type == MsgType.STREAM_START:
+            self.handle_stream_start(msg)
+
+        elif msg_type == MsgType.PING:
+            ping_id = msg.id
+            payload = msg.get_payload()
+
+            origin = payload.get("origin")
+            previous = payload.get("previous")
+
+            # Evitar loops
+            if ping_id in self.ping_cache:
+                return
+            self.ping_cache.add(ping_id)
+
+            #guarda caminho de retorno
+            self.ping_reverse_path[ping_id] = msg_sender
+
+            print(f"[{self.node_id}] Recebi PING de {msg_sender}")
+
+            # Se sou o servidor → enviar resposta
+            if self.is_server:
+                reply = Message(
+                    msg_type=MsgType.PONG,
+                    srcip=self.node_ip,
+                    destip=msg_sender,
+                    payload={"origin": origin, "previous": self.node_ip},
+                    msg_id=ping_id
+                )
+                self.send_tcp_message(msg_sender, reply)
+                print(f"[{self.node_id}] Sou servidor → PONG enviado para {msg_sender}")
+                return
+
+            # Caso contrário → reencaminhar
+            for neigh, active in self.neighbors.items():
+                if active and neigh != msg_sender:
+                    forward_msg = Message(
+                        msg_type=MsgType.PING,
+                        srcip=self.node_ip,
+                        destip=neigh,
+                        payload={"origin": origin, "previous": self.node_ip},
+                        msg_id=ping_id
+                    )
+                    self.send_tcp_message(neigh, forward_msg)
+                    print(f"[{self.node_id}] Reencaminhei PING para {neigh}")
+
+        elif msg_type == MsgType.PONG:
+            ping_id = msg.id
+            payload = msg.get_payload()
+
+            origin = payload.get("origin")
+            previous = payload.get("previous")
+
+            print(f"[{self.node_id}] Recebi PONG de {msg_sender}")
+
+            if self.node_ip == origin:
+                print(f"[{self.node_id}] PONG FINAL RECEBIDO!")
+                if hasattr(self, "gui_callback"):
+                    self.gui_callback("PONG RECEBIDO")
+                return
+
+
+            # Obter caminho invertido
+            next_hop = self.ping_reverse_path.get(ping_id)
+            if next_hop:
+                reply = Message(
+                    msg_type=MsgType.PONG,
+                    srcip=self.node_ip,
+                    destip=next_hop,
+                    payload={"origin": origin, "previous": self.node_ip},
+                    msg_id=ping_id
+                )
+                self.send_tcp_message(next_hop, reply)
+                print(f"[{self.node_id}] Reencaminhei PONG para {next_hop}")
             
         elif msg_type == MsgType.TEARDOWN:
             self.handle_teardown(msg)
@@ -431,6 +574,10 @@ class Node:
         
         # --- SERVER LOGIC ---
         if self.is_server:
+            if msg_video == self.server.video:
+                print(f"[{self.node_id}] Pedido de stream {msg_video} recebido de {msg_sender}. A iniciar envio...")
+                self.server.start_stream_to_client(msg_sender, msg_video)
+            
             if video in self.server.video:
                 print(f"[{self.node_id}] Pedido de stream {video} recebido de {msg_sender}. A iniciar envio...")
                 self.server.start_stream_to_client(msg_sender, video)
@@ -796,6 +943,15 @@ class Node:
         if self.is_server:
             self.server.stop_stream_to_client(sender_ip)
         
+        return best_route
+
+    def get_next_hop_for_ping(self, previous_hop):
+        """Escolhe o vizinho ativo para onde enviar o PING, evitando loop."""
+        for neigh, active in self.neighbors.items():
+            if active and neigh != previous_hop:
+                return neigh
+        return None
+
         # Remove client from distribution list
         if video in self.downstream_clients:
             if sender_ip in self.downstream_clients[video]:

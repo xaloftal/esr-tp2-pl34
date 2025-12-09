@@ -57,6 +57,8 @@ class RtpServer(threading.Thread):
             time.sleep(0.04)  # ~25 fps
 
         print("[RTP] Fim do stream.")
+        import sys
+        sys.stdout.flush() # Força a escrita no terminal
 
     def stop(self):
         self.running = False

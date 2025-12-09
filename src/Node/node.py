@@ -368,6 +368,7 @@ class Node:
         - Atualiza rotas
         - Calcula métricas (latência, jitter, perdas)
         - Reenvia se não visto antes
+        - TENTA OTIMIZAR A ROTA ATIVA SE ENCONTRAR UMA MELHOR
         """
 
         src_ip = msg.get_src()
@@ -383,7 +384,6 @@ class Node:
         current_latency = (time.time() - start_ts) * 1000  # ms
 
         # ------------------ JITTER ------------------
-        # Criar estruturas se não existirem
         if video not in self.last_flood_timestamp:
             self.last_flood_timestamp[video] = {}
 
@@ -394,16 +394,13 @@ class Node:
         else:
             jitter = abs(current_latency - old_ts)
 
-        # guardar timestamp para próximo cálculo
         self.last_flood_timestamp[video][src_ip] = current_latency
 
         # ------------------ PERDAS (PACKET LOSS) ------------------
-        # Procurar estatísticas anteriores (se existirem)
         if video not in self.packet_loss_stats:
             self.packet_loss_stats[video] = {}
 
         stats = self.packet_loss_stats[video].get(src_ip, {"expected": 1, "received": 1})
-
         loss_rate = 1 - (stats["received"] / max(stats["expected"], 1))
 
         # ------------------ SCORE UNIFICADO ------------------
@@ -428,7 +425,6 @@ class Node:
             }
 
             with self.lock:
-
                 if video not in self.routing_table:
                     self.routing_table[video] = [new_route]
                     print(f"[{self.node_id}] Nova rota {video}: via {src_ip}")
@@ -437,13 +433,71 @@ class Node:
                     existing = next((r for r in self.routing_table[video] if r["next_hop"] == src_ip), None)
 
                     if existing:
-                        # Atualiza SE MELHOR score
-                        if new_route["score"] < existing["score"]:
-                            existing.update(new_route)
-                            print(f"[{self.node_id}] Rota Melhorada {video}: via {src_ip}")
+                        # Preservar o estado is_active se já existia
+                        new_route["is_active"] = existing["is_active"]
+                        existing.update(new_route)
+                        # print(f"[{self.node_id}] Rota Atualizada {video}: via {src_ip} (Score: {score:.2f})")
                     else:
                         self.routing_table[video].append(new_route)
                         print(f"[{self.node_id}] Rota Extra {video}: via {src_ip}")
+
+        # ======================================================================
+        # LÓGICA DE OTIMIZAÇÃO (SWITCHOVER)
+        # ======================================================================
+        
+        # Só faz sentido verificar se eu estou atualmente a consumir este vídeo
+        has_clients = (video in self.downstream_clients and len(self.downstream_clients[video]) > 0)
+        
+        # Verificar se tenho uma rota ativa para este vídeo
+        current_active_route = None
+        if video in self.routing_table:
+            for route in self.routing_table[video]:
+                if route["is_active"]:
+                    current_active_route = route
+                    break
+        
+        if current_active_route and has_clients:
+            # 1. Qual é o melhor vizinho AGORA (baseado nas tabelas atualizadas)?
+            best_neigh_ip = self.find_best_active_neighbour(video)
+            
+            # Se existe um vizinho melhor E não é o que já estamos a usar
+            if best_neigh_ip and best_neigh_ip != current_active_route["next_hop"]:
+                
+                # Vamos buscar o score da nova rota candidata
+                new_score = float('inf')
+                for r in self.routing_table[video]:
+                    if r["next_hop"] == best_neigh_ip:
+                        new_score = r["score"]
+                        break
+                        
+                current_score = current_active_route["score"]
+                
+                # 2. Histerese: Só muda se for SIGNIFICATIVAMENTE melhor 
+                # (ex: novo score é < 70% do atual, ou seja, 30% melhor)
+                # Isto evita o efeito "ping-pong" entre rotas com qualidade semelhante.
+                threshold = 0.7 
+                
+                if new_score < (current_score * threshold):
+                    print(f"\n[{self.node_id}] OTIMIZAÇÃO DETETADA! ")
+                    print(f"   Rota Atual: via {current_active_route['next_hop']} (Score: {current_score:.2f})")
+                    print(f"   Nova Rota:  via {best_neigh_ip} (Score: {new_score:.2f})")
+                    print(f"   -> A iniciar troca de rota...")
+                    
+                    # A. Pedir stream ao novo vizinho (Make before Break)
+                    start_msg = Message.create_stream_start_message(
+                        srcip=self.node_ip, destip=best_neigh_ip, video=video
+                    )
+                    self.send_tcp_message(best_neigh_ip, start_msg)
+                    
+                    # B. Desligar o antigo (TEARDOWN)
+                    old_ip = current_active_route["next_hop"]
+                    teardown_msg = Message.create_teardown_message(
+                        srcip=self.node_ip, destip=old_ip, video=video
+                    )
+                    self.send_tcp_message(old_ip, teardown_msg)
+                    
+                    # C. Atualizar estado local (A nova rota ficará ativa quando chegar RTP)
+                    current_active_route["is_active"] = False
 
         # ------------------ CACHE e REBROADCAST ------------------
         key = (origin_ip, msg_id)
@@ -467,7 +521,6 @@ class Node:
         for neigh, is_active in self.neighbors.items():
             if neigh != src_ip:
                 self.send_tcp_message(neigh, new_msg)
-
                 
     def announce_leave(self):
         """
@@ -766,23 +819,30 @@ class Node:
 
 
                     
-    def find_best_active_neighbour(self, video):
+    def find_best_active_neighbour(self, video, exclude_ip=None):
         """
-        Escolhe o vizinho ativo com a melhor métrica para um determinado vídeo.
-        NOTA: Não verificamos route['is_active'] aqui, porque estamos a tentar
-        iniciar a stream. Apenas verificamos se o VIZINHO está online.
+        Escolhe o vizinho ativo com a melhor métrica, IGNORANDO o 'exclude_ip'.
         """
         if video not in self.routing_table:
             return None
 
-        active_routes = [
-            r for r in self.routing_table[video]
-            if self.neighbors.get(r["next_hop"], False)
-        ]
+        active_routes = []
+        for r in self.routing_table[video]:
+            neigh_ip = r["next_hop"]
+            
+            # Verifica se está ativo nos vizinhos
+            is_online = self.neighbors.get(neigh_ip, False)
+            
+            # Verifica se NÃO é o IP que queremos excluir
+            not_excluded = (neigh_ip != exclude_ip)
+            
+            if is_online and not_excluded:
+                active_routes.append(r)
 
         if not active_routes:
             return None
 
+        # Escolhe o que tem menor score
         best = min(active_routes, key=lambda r: r["score"])
         return best["next_hop"]
 
@@ -923,26 +983,44 @@ class Node:
             self.rtp_socket.sendto(raw_data, (client_ip, self.rtp_port))
         
     def check_rtp_silence(self):
-        """Verifica se uma rota ativa parou de receber RTP (silêncio) e desativa-a."""
+        """Verifica silêncio e faz failover ignorando a rota atual."""
         while True:
-            time.sleep(1) # Verifica a cada 1 segundo
+            time.sleep(1)
             now = time.time()
             
             with self.lock:
-                # Usar list() para permitir modificação do dicionário (pop) durante a iteração
                 for video, last_ts in list(self.last_rtp_time.items()):
-                    
                     if now - last_ts > self.rtp_timeout:
-                        print(f"[{self.node_id}] SILÊNCIO RTP detectado para {video}. A desativar rota(s).")
+                        print(f"[{self.node_id}] ALERTA: Silêncio RTP em {video}.")
                         
-                        # Marcar todas as rotas ativas para este vídeo como INATIVAS
+                        failed_ip = None
+                        
+                        # 1. Desativar rotas e descobrir quem falhou
                         for route in self.routing_table.get(video, []):
                             if route["is_active"]:
                                 route["is_active"] = False
-                                print(f"[{self.node_id}] Rota desativada por silêncio RTP: {video} via {route['next_hop']}")
-                                
-                        # Remover timer
+                                failed_ip = route["next_hop"] # <--- Guardar quem falhou
+                                print(f"[{self.node_id}] Rota falhou via {failed_ip}")
+                        
                         self.last_rtp_time.pop(video, None)
+
+                        # 2. FAILOVER (Ignorando o failed_ip)
+                        has_clients = (video in self.downstream_clients and len(self.downstream_clients[video]) > 0)
+                        
+                        if failed_ip and has_clients:
+                            print(f"[{self.node_id}] 🔄 A procurar alternativa (exceto {failed_ip})...")
+                            
+                            # AQUI: Usamos o exclude_ip
+                            best_neigh = self.find_best_active_neighbour(video, exclude_ip=failed_ip)
+                            
+                            if best_neigh:
+                                print(f"[{self.node_id}] ✅ Alternativa encontrada: {best_neigh}. A enviar START.")
+                                start_msg = Message.create_stream_start_message(
+                                    srcip=self.node_ip, destip=best_neigh, video=video
+                                )
+                                self.send_tcp_message(best_neigh, start_msg)
+                            else:
+                                print(f"[{self.node_id}] ❌ Nenhuma outra rota disponível.")
     
     def activate_route(self, video, neighbor_ip):
         """Marca a rota como ativa **apenas se o vizinho estiver ativo**."""
@@ -963,6 +1041,8 @@ class Node:
         sender_ip = msg.get_src()
         payload = msg.get_payload()
         video = payload.get("video")
+        best_route = None  
+
 
         print(f"[{self.node_id}] Recebido TEARDOWN de {sender_ip} para {video}")
         if self.is_server:

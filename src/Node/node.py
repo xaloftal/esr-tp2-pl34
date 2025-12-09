@@ -16,7 +16,6 @@ from config import NODE_TCP_PORT, BOOTSTRAPPER_PORT, NODE_RTP_PORT, HEARTBEAT_IN
 from aux_files.aux_message import Message, MsgType
 from aux_files.RtpPacket import RtpPacket
 
-
 class Node:
     """
     O "cérebro" do nó. Mantém o estado (vizinhos, rotas) e
@@ -39,6 +38,11 @@ class Node:
         self.pending_requests = [] # Lista de vídeos que já pedimos mas ainda não chegaram
         self.rtp_port = NODE_RTP_PORT
         self.open_rtp_port()
+
+        # --- NOVO: Variáveis para Detecção de Silêncio RTP ---
+        self.last_rtp_time = {} # {video: timestamp}
+        self.rtp_timeout = 0.5  # 2 segundos sem RTP para desativar rota
+        # ---------------------------------------------------
         
        
         
@@ -79,7 +83,16 @@ class Node:
         self.server.start()
         t = threading.Thread(target=self.heartbeat, daemon=True)
         t.start()
+
+        # --- NOVO: Inicia a thread de verificação de silêncio RTP ---
+        threading.Thread(target=self.check_rtp_silence, daemon=True).start()
+        # ------------------------------------------------------------
         
+        # --- NOVO: Iniciar FLOOD Periódico se for o Streamer ---
+        if self.is_server:
+            threading.Thread(target=self.periodic_flood, daemon=True).start()
+        # -------------------------------------------------------
+
         print(f"[{self.node_id}] Nó iniciado. Vizinhos: {self.neighbors}")
         
     
@@ -132,7 +145,21 @@ class Node:
             print(f"[Cliente] Erro a ligar/registar no bootstrapper: {e}")
             return []
 
-
+    def periodic_flood(self):
+        """Executa start_flood periodicamente, a cada 10 segundos."""
+        print(f"[{self.node_id}] [FLOOD] (FLOOD) periódico foi ativado. Intervalo: 10 segundos.")
+        
+        # O atraso inicial evita que o flood ocorra antes de o servidor estar pronto.
+        time.sleep(5) 
+        
+        while True:
+            # Espera 10 segundos antes de cada execução
+            time.sleep(7)
+            
+            # Chama a função existente para iniciar o flood
+            # Nota: isto irá interromper o prompt de comando interativo!
+            print(f"\n[{self.node_id}] [FLOOD] Executando FLOOD periódico.")
+            self.start_flood()
 
 
     def send_tcp_message(self, dest_ip, message):
@@ -302,10 +329,31 @@ class Node:
                 
     def announce_leave(self):
         """
-        Anuncia aos vizinhos que vai sair
+        Anuncia aos vizinhos que vai sair e limpa as streams ativas
         """
         print(f"[{self.node_id}] A anunciar LEAVE...")
 
+        # --- NOVA LÓGICA DE LIMPEZA DE STREAMS ---
+        if self.video in self.routing_table:
+            # Encontrar o vizinho UPSTREAM que está a fornecer a stream (is_active=True)
+            active_route = next((r for r in self.routing_table[self.video] if r["is_active"]), None)
+            
+            if active_route:
+                upstream_ip = active_route["next_hop"]
+                print(f"[{self.node_id}] Envio TEARDOWN para o upstream ativo ({upstream_ip}).")
+                
+                # Cria e envia a mensagem TEARDOWN
+                teardown_msg = Message.create_teardown_message(
+                    srcip=self.node_ip, 
+                    destip=upstream_ip,
+                    video=self.video
+                )
+                self.send_tcp_message(upstream_ip, teardown_msg)
+            else:
+                print(f"[{self.node_id}] Sem rota ATIVA para {self.video} para enviar TEARDOWN.")
+        # --- FIM DA NOVA LÓGICA ---
+
+        # Lógica original: Enviar LEAVE aos vizinhos para a topologia
         for neigh_ip, is_active in self.neighbors.items():
             if is_active:
                 msg = Message.create_leave_message(self.node_ip, neigh_ip) 
@@ -601,6 +649,7 @@ class Node:
                 print(f"[{self.node_id}] Erro na thread RTP: {e}")
                 break
 
+
     def handle_rtp_packet(self, raw_data, video_name, sender_ip):
         """
         1. Verifica se alguém quer este vídeo.
@@ -658,20 +707,71 @@ class Node:
         )
 
         if not has_clients:
+            # Novo Mecanismo de Limpeza FORÇADA (apenas para reinícios)
+            if not hasattr(self, 'orphan_count'):
+                self.orphan_count = {}
+            
+            self.orphan_count[video_name] = self.orphan_count.get(video_name, 0) + 1
+            
             print(f"[{self.node_id}] Pacote órfão recebido para {video_name}. Ignorar.")
-            return
+            
+            # Se receber muitos pacotes órfãos (ex: 10), envia TEARDOWN forçado para o upstream.
+            if self.orphan_count[video_name] > 10: 
+                print(f"[{self.node_id}] ATENÇÃO: Limite de órfãos atingido. A forçar TEARDOWN para {sender_ip}.")
+                
+                # Enviar TEARDOWN para o nó que está a enviar o RTP (o Streamer, neste caso, 10.0.19.10)
+                teardown_msg = Message.create_teardown_message(
+                    srcip=self.node_ip, 
+                    destip=sender_ip, # IP do Streamer
+                    video=video_name
+                )
+                self.send_tcp_message(sender_ip, teardown_msg)
+                
+                # Reset do contador
+                self.orphan_count[video_name] = 0 
+                return
+            
+            return # Não faz forward, ignora o pacote
 
         # --------------------------------------------------------------
         # 4. Ativar rota (porque recebemos RTP válido)
         # --------------------------------------------------------------
         self.activate_route(video_name, sender_ip)
+        
+        # --- NOVO: ATUALIZAR O TIMER RTP APÓS RECEÇÃO VÁLIDA ---
+        # Isto é a base para o Mecanismo B (check_rtp_silence)
+        if hasattr(self, 'last_rtp_time'):
+            self.last_rtp_time[video_name] = time.time()
+        # -------------------------------------------------------
 
         # --------------------------------------------------------------
         # 5. Forwarding para os clientes downstream
         # --------------------------------------------------------------
         for client_ip in self.downstream_clients[video_name]:
             self.rtp_socket.sendto(raw_data, (client_ip, self.rtp_port))
-
+        
+    def check_rtp_silence(self):
+        """Verifica se uma rota ativa parou de receber RTP (silêncio) e desativa-a."""
+        while True:
+            time.sleep(1) # Verifica a cada 1 segundo
+            now = time.time()
+            
+            with self.lock:
+                # Usar list() para permitir modificação do dicionário (pop) durante a iteração
+                for video, last_ts in list(self.last_rtp_time.items()):
+                    
+                    if now - last_ts > self.rtp_timeout:
+                        print(f"[{self.node_id}] SILÊNCIO RTP detectado para {video}. A desativar rota(s).")
+                        
+                        # Marcar todas as rotas ativas para este vídeo como INATIVAS
+                        for route in self.routing_table.get(video, []):
+                            if route["is_active"]:
+                                route["is_active"] = False
+                                print(f"[{self.node_id}] Rota desativada por silêncio RTP: {video} via {route['next_hop']}")
+                                
+                        # Remover timer
+                        self.last_rtp_time.pop(video, None)
+    
     def activate_route(self, video, neighbor_ip):
         """Marca a rota como ativa **apenas se o vizinho estiver ativo**."""
 

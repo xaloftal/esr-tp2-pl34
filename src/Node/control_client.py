@@ -236,11 +236,4 @@ if __name__ == "__main__":
     root = Tk()
     app = ClienteGUI(root, client)
     root.title(f"Cliente RTP - {node_id}")
-
-
-    root.mainloop()
-    # Inicia a GUI
-    root = Tk()
-    app = ClienteGUI(root, client)
-    root.title(f"Cliente RTP - {node_id}")
     root.mainloop()

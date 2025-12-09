@@ -563,7 +563,7 @@ class Node:
                 for route in routes:
                     if route["next_hop"] == neigh_ip:
                         route["is_active"] = False
-                        print(f"[{self.node_id}] Rota reativada por JOIN: {video} via {neigh_ip}")
+                        
 
 
         
@@ -574,16 +574,11 @@ class Node:
         
         # --- SERVER LOGIC ---
         if self.is_server:
-            if msg_video == self.server.video:
-                print(f"[{self.node_id}] Pedido de stream {msg_video} recebido de {msg_sender}. A iniciar envio...")
-                self.server.start_stream_to_client(msg_sender, msg_video)
-            
             if video in self.server.video:
                 print(f"[{self.node_id}] Pedido de stream {video} recebido de {msg_sender}. A iniciar envio...")
                 self.server.start_stream_to_client(msg_sender, video)
             else:
                 print(f"[{self.node_id}] Pedido de stream {video} recebido de {msg_sender}, mas vídeo não disponível.")
-                
         # --- ROUTER LOGIC ---
         else:
             
@@ -687,25 +682,56 @@ class Node:
 
     def local_leave_cleanup(self, dead_ip):
         """
-        Remove um vizinho morto - marca rotas como inativas
+        1. Marca vizinho como morto.
+        2. Se esse vizinho era o nosso "next_hop" para algum vídeo ativo, tenta mudar de rota!
         """
         with self.lock:
-            # Marcar vizinho como inativo
-            
-             # remove da join_cache se lá estiver
+            # --- Limpeza de Cache e Vizinhos ---
             self.join_cache.discard(dead_ip)
-                # adiciona à leave_cache
             self.leave_cache.add(dead_ip)
+            
             if dead_ip in self.neighbors:
                 self.neighbors[dead_ip] = False
-                print(f"[{self.node_id}] Vizinho {dead_ip} marcado como inativo (timeout)")
-            
-            # Marcar todas as rotas que usam este next_hop como inativas
+                print(f"[{self.node_id}] Vizinho {dead_ip} marcado como inativo (TIMEOUT).")
+
+            # --- Verificar Rotas Afetadas ---
             for video, routes in self.routing_table.items():
+                
+                active_route_died = False
                 for route in routes:
-                    if route["next_hop"] == dead_ip:
+                    # Se a rota usava este vizinho E estava ativa
+                    if route["next_hop"] == dead_ip and route["is_active"]:
                         route["is_active"] = False
-                        print(f"[{self.node_id}] Rota inativada: stream {video}, via {dead_ip}")
+                        active_route_died = True
+                        print(f"[{self.node_id}] Rota ATIVA para {video} morreu (via {dead_ip})!")
+                
+                # --- LÓGICA DE RECUPERAÇÃO (FAILOVER) ---
+                # Se perdemos a rota ativa E temos clientes à espera (downstream)
+                has_clients = (video in self.downstream_clients and len(self.downstream_clients[video]) > 0)
+                
+                if active_route_died and has_clients:
+                    print(f"[{self.node_id}] A procurar rota alternativa de emergência para {video}...")
+                    
+                    # 1. Encontrar o próximo melhor vizinho (que não seja o morto)
+                    best_neigh = self.find_best_active_neighbour(video)
+                    
+                    if best_neigh:
+                        print(f"[{self.node_id}] Rota alternativa encontrada! A pedir a {best_neigh}.")
+                        
+                        # 2. Enviar pedido START para o novo vizinho
+                        start_msg = Message.create_stream_start_message(
+                            srcip=self.node_ip,
+                            destip=best_neigh,
+                            video=video
+                        )
+                        self.send_tcp_message(best_neigh, start_msg)
+                        
+                        # (Opcional) Adicionar aos pendentes para evitar duplicados imediatos
+                        if video not in self.pending_requests:
+                            self.pending_requests.append(video)
+                    else:
+                        print(f"[{self.node_id}] CRÍTICO: Sem rotas alternativas para {video}. Stream vai parar.")
+                        # Aqui poderias enviar um TEARDOWN para baixo, mas geralmente deixa-se o timeout tratar disso
 
 
 
@@ -942,6 +968,36 @@ class Node:
         print(f"[{self.node_id}] Recebido TEARDOWN de {sender_ip} para {video}")
         if self.is_server:
             self.server.stop_stream_to_client(sender_ip)
+        
+        # Remove client from distribution list
+        if video in self.downstream_clients:
+            if sender_ip in self.downstream_clients[video]:
+                self.downstream_clients[video].remove(sender_ip)
+                print(f"[{self.node_id}] Cliente {sender_ip} removido da lista de {video}.")
+
+            # Check if theres another client
+            if len(self.downstream_clients[video]) == 0:
+                print(f"[{self.node_id}] Último cliente saiu. A fechar a rota para {video}...")
+                
+                if video in self.routing_table:
+                    best_route = None
+                    for route in self.routing_table[video]:
+                        if route["is_active"]:
+                            # Marcamos como INATIVO
+                            route["is_active"] = False
+                            best_route = route["next_hop"]
+                            
+                            if best_route:
+                                print(f"[{self.node_id}] A enviar TEARDOWN para cima ({best_route}).")
+                                forward_msg = Message(
+                                    msg_type=MsgType.TEARDOWN,
+                                    srcip=self.node_ip,
+                                    destip=best_route,
+                                    payload={"video": video}
+                                )
+                                self.send_tcp_message(best_route, forward_msg)
+            else:
+                print(f"[{self.node_id}] Ainda restam {len(self.downstream_clients[video])} clientes. A rota mantém-se ATIVA.")
         
         return best_route
 

@@ -25,7 +25,7 @@ class ClienteGUI:
         self.teardownAcked = 0
         self.frameNbr = 0
         self.createWidgets()
-        self.openRtpPort()
+        #self.openRtpPort()
         # Don't call playMovie here - let user click Play button
         # self.playMovie()
   
@@ -119,8 +119,12 @@ class ClienteGUI:
     
     def exitClient(self):
         """Teardown button handler."""
-        self.master.destroy() # Close the gui window
-        os.remove(CACHE_FILE_NAME + str(self.sessionId) + CACHE_FILE_EXT) 
+        self.client.stop_stream()
+        self.master.destroy()
+        # Remove cache file
+        file_path = CACHE_FILE_NAME + "0" + CACHE_FILE_EXT # 0 is session ID
+        if os.path.exists(file_path):
+            os.remove(file_path) 
 
     def pauseMovie(self):
         """Pause button handler."""
@@ -188,7 +192,7 @@ class ClienteGUI:
             self.rtpSocket.bind((self.addr, self.port))
             print('\nBind \n')
         except:
-            tkMessageBox.showwarning('Unable to Bind', 'Unable to bind PORT=%d' %self.rtpPort)
+            tkMessageBox.showwarning('Unable to Bind', 'Unable to bind PORT=%d' %self.port)
 
     def sendPing(self):
         self.pongLabel.config(text="") # limpar resposta anterior

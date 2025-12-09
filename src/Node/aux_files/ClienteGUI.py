@@ -201,14 +201,9 @@ class ClienteGUI:
             # Bind the socket to the address using the RTP port
             self.rtpSocket.bind((self.addr, self.rtpPort)) # Usa self.rtpPort
             print('\nBind \n')
-<<<<<<< HEAD
-        except:
-            tkMessageBox.showwarning('Unable to Bind', 'Unable to bind PORT=%d' %self.port)
-=======
         except Exception as e:
             # Garante que a mensagem de erro usa self.rtpPort
             tkMessageBox.showwarning('Unable to Bind', f'Unable to bind PORT={self.rtpPort}. Error: {e}')
->>>>>>> b380bcb (1)
 
     def sendPing(self):
         self.pongLabel.config(text="") # limpar resposta anterior

@@ -18,20 +18,21 @@ class ClienteGUI:
         self.master.protocol("WM_DELETE_WINDOW", self.handler)
         self.client = client
         self.addr = client.node_ip
-        self.port = client.RTPport
+        
+        # O cliente usa RTPport, vamos inicializar self.rtpPort (corrigindo o erro)
+        self.rtpPort = client.RTPport 
+        self.port = self.rtpPort # 'self.port' já existia, mas vamos mantê-lo
+        
         self.rtspSeq = 0
         self.sessionId = 0
         self.requestSent = -1
         self.teardownAcked = 0
         self.frameNbr = 0
         self.createWidgets()
-        #self.openRtpPort()
         # Don't call playMovie here - let user click Play button
         # self.playMovie()
-  
-  
         
-        self.createWidgets()
+        self.openRtpPort() # Chamada única aqui
   
     def createWidgets(self):
         """Build GUI."""
@@ -179,17 +180,25 @@ class ClienteGUI:
         self.label.image = photo
         
     
+    # Ficheiro: aux_files/ClienteGUI.py
+
+    # Ficheiro: aux_files/ClienteGUI.py (Linha ~188)
+
     def openRtpPort(self):
         """Open RTP socket binded to a specified port."""
         # Create a new datagram socket to receive RTP packets from the server
         self.rtpSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        
+        #Reutilização da porta
+        self.rtpSocket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # ------------------------------------------
         
         # Set the timeout value of the socket to 0.5sec
         self.rtpSocket.settimeout(0.5)
         
         try:
             # Bind the socket to the address using the RTP port
-            self.rtpSocket.bind((self.addr, self.port))
+            self.rtpSocket.bind((self.addr, self.rtpPort)) # Usa self.rtpPort
             print('\nBind \n')
         except:
             tkMessageBox.showwarning('Unable to Bind', 'Unable to bind PORT=%d' %self.port)

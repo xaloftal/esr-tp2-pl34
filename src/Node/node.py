@@ -150,19 +150,18 @@ class Node:
             return []
 
     def periodic_flood(self):
-        """Executa start_flood periodicamente, a cada 10 segundos."""
-        print(f"[{self.node_id}] [FLOOD] (FLOOD) periódico foi ativado. Intervalo: 10 segundos.")
+        """Executa start_flood periodicamente, a cada 30 segundos."""
+        print(f"[{self.node_id}] [FLOOD] (FLOOD) periódico foi ativado. Intervalo: 30 segundos.")
         
         # O atraso inicial evita que o flood ocorra antes de o servidor estar pronto.
         time.sleep(5) 
         
         while True:
-            # Espera 10 segundos antes de cada execução
-            time.sleep(7)
+            # Espera 30 segundos antes de cada execução
+            time.sleep(30)
             
             # Chama a função existente para iniciar o flood
             # Nota: isto irá interromper o prompt de comando interativo!
-            print(f"\n[{self.node_id}] [FLOOD] Executando FLOOD periódico.")
             self.start_flood()
 
 
@@ -671,14 +670,14 @@ class Node:
             video=self.video
         )
 
-        print(f"[{self.node_id}] A iniciar FLOOD com ID {msg_id} para stream {self.video}")
+        # Enviar o flood APENAS aos vizinhos ativos
+        for neigh_ip, is_active in self.neighbors.items():
+            if is_active:
+                print(f"[{self.node_id}] A iniciar FLOOD com ID {msg_id} para stream {self.video}")
+                print(f"[{self.node_id}] Enviando FLOOD para {neigh_ip}")
+                self.send_tcp_message(neigh_ip, flood_msg)
+                
 
-        # Enviar o flood aos vizinhos
-        for neigh_ip in self.neighbors.keys():
-            print(f"[{self.node_id}] Enviando FLOOD para {neigh_ip}")
-            self.send_tcp_message(neigh_ip, flood_msg)
-
-        
 
     def local_leave_cleanup(self, dead_ip):
         """

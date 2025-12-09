@@ -29,7 +29,6 @@ class ClienteGUI:
         self.teardownAcked = 0
         self.frameNbr = 0
         self.createWidgets()
-        #self.openRtpPort()
         # Don't call playMovie here - let user click Play button
         # self.playMovie()
         

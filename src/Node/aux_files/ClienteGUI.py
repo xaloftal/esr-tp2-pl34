@@ -152,7 +152,8 @@ class ClienteGUI:
                                         
                     if currFrameNbr > self.frameNbr: # Discard the late packet
                         self.frameNbr = currFrameNbr
-                        self.updateMovie(self.writeFrame(rtpPacket.getPayload()))
+                        # Get frame payload without video name prefix
+                        self.updateMovie(self.writeFrame(rtpPacket.getFramePayload()))
             except:
                 # Stop listening upon requesting PAUSE or TEARDOWN
                 if self.playEvent.isSet(): 

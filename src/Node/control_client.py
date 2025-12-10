@@ -74,7 +74,8 @@ class ControlClient():
                     rtpPacket = RtpPacket()
                     rtpPacket.decode(data)
                     
-                    payload = rtpPacket.getPayload()
+                    # Get frame payload without video name prefix
+                    payload = rtpPacket.getFramePayload()
                     currFrameNbr = rtpPacket.seqNum()
                     
                     

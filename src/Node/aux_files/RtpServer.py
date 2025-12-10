@@ -51,7 +51,8 @@ class RtpServer(threading.Thread):
             packet.encode(
                 version=2, padding=0, extension=0, cc=0,
                 seqnum=self.seqnum, marker=0, pt=26,
-                ssrc=self.ssrc, payload=data  # Use video-specific SSRC
+                ssrc=self.ssrc, payload=data,
+                video_name=self.video_name  # Include video name in payload
             )
             
             self.sock.sendto(packet.getPacket(), (self.client_ip, self.client_port))

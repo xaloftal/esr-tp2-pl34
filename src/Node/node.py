@@ -380,6 +380,12 @@ class Node:
         video = payload.get("video")
         start_ts = payload.get("start_timestamp", time.time())
         origin_ip = payload.get("origin_ip", src_ip)
+        if self.is_server:
+            my_video = self.server.video
+            # Check if I have this video (supports string or list format)
+            if (isinstance(my_video, str) and my_video == video) or \
+               (isinstance(my_video, (list, dict)) and video in my_video):
+                return  # STOP processing here.
 
         # ------------------ LATÊNCIA ------------------
         current_latency = (time.time() - start_ts) * 1000  # ms
@@ -413,7 +419,10 @@ class Node:
         score = hop_count*α + current_latency*β + jitter*γ + loss_rate*δ
 
         # ------------------ ATUALIZAR TABELA DE ROTAS ------------------
-        if src_ip != self.node_ip and video:
+        if src_ip != self.node_ip and origin_ip != self.node_ip and video:
+            
+            # Register video in mapper for SSRC lookups
+            self.video_mapper.register_video(video)
 
             new_route = {
                 "next_hop": src_ip,
@@ -862,6 +871,7 @@ class Node:
             # Verifica se está ativo nos vizinhos
             is_online = self.neighbors.get(neigh_ip, False)
             
+            
             # Verifica se NÃO é o IP que queremos excluir
             not_excluded = (neigh_ip != exclude_ip)
             
@@ -1060,17 +1070,8 @@ class Node:
         client_ips = list(self.downstream_clients[video_name])
         
         # Print RTP forwarding info with stream-specific color
-        # Also log if this client appears in other video's downstream lists (debugging cross-contamination)
-        other_videos = []
-        for vid, clients in self.downstream_clients.items():
-            if vid != video_name:
-                for client_ip in client_ips:
-                    if client_ip in clients:
-                        other_videos.append(f"{client_ip} also in {vid}")
-        
-        contamination_msg = f" WARNING: {other_videos}" if other_videos else ""
         print(rtp_forward_log(video_name, 
-            f"[{self.node_id}] RTP FWD: '{video_name}' seq={current_seq} from {sender_ip} → {num_clients} client(s): {client_ips}{contamination_msg}"))
+           f"[{self.node_id}] RTP FWD: '{video_name}' seq={current_seq} from {sender_ip} → {num_clients} client(s): {client_ips}"))
         
         for client_ip in self.downstream_clients[video_name]:
             self.rtp_socket.sendto(raw_data, (client_ip, self.rtp_port))
@@ -1101,19 +1102,19 @@ class Node:
                         has_clients = (video in self.downstream_clients and len(self.downstream_clients[video]) > 0)
                         
                         if failed_ip and has_clients:
-                            print(warning_log(f"[{self.node_id}] 🔄 A procurar alternativa (exceto {failed_ip})..."))
+                            print(warning_log(f"[{self.node_id}] A procurar alternativa (exceto {failed_ip})..."))
                             
                             # AQUI: Usamos o exclude_ip
                             best_neigh = self.find_best_active_neighbour(video, exclude_ip=failed_ip)
                             
                             if best_neigh:
-                                print(route_log(f"[{self.node_id}] ✅ Alternativa encontrada: {best_neigh}. A enviar START."))
+                                print(route_log(f"[{self.node_id}] Alternativa encontrada: {best_neigh}. A enviar START."))
                                 start_msg = Message.create_stream_start_message(
                                     srcip=self.node_ip, destip=best_neigh, video=video
                                 )
                                 self.send_tcp_message(best_neigh, start_msg)
                             else:
-                                print(error_log(f"[{self.node_id}] ❌ Nenhuma outra rota disponível."))
+                                print(error_log(f"[{self.node_id}] Nenhuma outra rota disponível."))
     
     def activate_route(self, video, neighbor_ip):
         """Marca a rota como ativa **apenas se o vizinho estiver ativo**."""

@@ -53,7 +53,6 @@ class ControlServer:
     def start_stream_to_client(self, client_ip, video_name):
         print(f"[Servidor] Preparar envio RTP de {video_name} para {client_ip}")
 
-
         if isinstance(self.video, dict):
             video_path = self.video.get(video_name, None)
         else:
@@ -62,30 +61,45 @@ class ControlServer:
         if not video_path:
             print("[Servidor] Erro: vídeo não encontrado na configuração.")
             return
-        if client_ip in self.active_streams:
-            print(f"[Servidor] Já existe stream para {client_ip}. A reiniciar...")
-            self.active_streams[client_ip].stop()
-            del self.active_streams[client_ip]
+
+        # --- CORREÇÃO: Chave composta (IP, VIDEO) ---
+        stream_key = (client_ip, video_name)
+
+        if stream_key in self.active_streams:
+            print(f"[Servidor] Já existe stream de {video_name} para {client_ip}. A reiniciar...")
+            self.active_streams[stream_key].stop()
+            del self.active_streams[stream_key]
     
-        # CRITICAL: Pass video_name for SSRC, not video_path
         rtp = RtpServer(video_file=video_path,
                         video_name=video_name,
                         client_ip=client_ip,
                         client_port=self.UDPport)
         rtp.start()
-        self.active_streams[client_ip] = rtp
+        
+        # Guardar com a nova chave
+        self.active_streams[stream_key] = rtp
 
-    def stop_stream_to_client(self, client_ip):
-        """Pára o envio de stream para um cliente específico."""
-        if client_ip in self.active_streams:
-            print(f"[Servidor] A parar stream para {client_ip}...")
-            
-            self.active_streams[client_ip].stop()
-            
-            # Remove da lista de ativos
-            del self.active_streams[client_ip]
-        else:
-            print(f"[Servidor] Pedido de paragem para {client_ip}, mas não há stream ativo.")
-    
+    def stop_stream_to_client(self, client_ip, video_name=None):
+        """
+        Pára o envio. Se video_name for None, pára TODOS os streams desse cliente.
+        Se video_name for especificado, pára apenas esse.
+        """
+        
+        # Se quiseres parar um video especifico (recomendado)
+        if video_name:
+            stream_key = (client_ip, video_name)
+            if stream_key in self.active_streams:
+                print(f"[Servidor] A parar stream {video_name} para {client_ip}...")
+                self.active_streams[stream_key].stop()
+                del self.active_streams[stream_key]
+                return
+
+        # Fallback: Se o teu Node.py antigo chamar esta função sem o video_name,
+        # procuramos chaves que comecem por esse IP (não ideal, mas compatível)
+        keys_to_remove = [k for k in self.active_streams if k[0] == client_ip]
+        for k in keys_to_remove:
+            print(f"[Servidor] A parar stream {k[1]} para {client_ip}...")
+            self.active_streams[k].stop()
+            del self.active_streams[k]  
 
         

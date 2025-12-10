@@ -421,8 +421,7 @@ class Node:
         # ------------------ ATUALIZAR TABELA DE ROTAS ------------------
         if src_ip != self.node_ip and origin_ip != self.node_ip and video:
             
-            # Register video in mapper for SSRC lookups
-            self.video_mapper.register_video(video)
+            
 
             new_route = {
                 "next_hop": src_ip,
@@ -446,7 +445,7 @@ class Node:
                         # Preservar o estado is_active se já existia
                         new_route["is_active"] = existing["is_active"]
                         existing.update(new_route)
-                        # print(f"[{self.node_id}] Rota Atualizada {video}: via {src_ip} (Score: {score:.2f})")
+                        print(f"[{self.node_id}] Rota Atualizada {video}: via {src_ip} (Score: {score:.2f})")
                     else:
                         self.routing_table[video].append(new_route)
                         print(flood_log(f"[{self.node_id}] Rota Extra {video}: via {src_ip}"))
@@ -489,7 +488,11 @@ class Node:
                 
                 if new_score < (current_score * threshold):
                     print(route_log(f" Nova Rota otimizada para {video}:  via {best_neigh_ip} (Score: {new_score:.2f})"))
-
+                    with self.lock:
+                        for r in self.routing_table[video]:
+                            if r["next_hop"] == best_neigh_ip:
+                                r["is_active"] = True
+                                break
                     
                     # A. Pedir stream ao novo vizinho (Make before Break)
                     start_msg = Message.create_stream_start_message(
@@ -807,6 +810,16 @@ class Node:
                     
                     if best_neigh:
                         print(route_log(f"[{self.node_id}] Rota alternativa encontrada! A pedir a {best_neigh}."))
+
+                        # --- CORREÇÃO AQUI (ADICIONAR ESTE BLOCO) ---
+                        # Pré-ativar a rota para evitar rejeição de pacotes (orphan packets)
+                        if video in self.routing_table:
+                            for r in self.routing_table[video]:
+                                if r["next_hop"] == best_neigh:
+                                    r["is_active"] = True
+                                    print(route_log(f"[{self.node_id}] Rota de emergência ativada localmente via {best_neigh}"))
+                                    break
+                        # --------------------------------------------
                         
                         # 2. Enviar pedido START para o novo vizinho
                         start_msg = Message.create_stream_start_message(
@@ -821,8 +834,6 @@ class Node:
                             self.pending_requests.append(video)
                     else:
                         print(error_log(f"[{self.node_id}] CRÍTICO: Sem rotas alternativas para {video}. Stream vai parar."))
-                        # Aqui poderias enviar um TEARDOWN para baixo, mas geralmente deixa-se o timeout tratar disso
-
 
 
     def heartbeat(self):
@@ -1026,7 +1037,7 @@ class Node:
                     destip=sender_ip,
                     video=video_name
                 )
-                self.send_tcp_message(sender_ip, teardown_msg)
+                threading.Thread(target=self.send_tcp_message, args=(sender_ip, teardown_msg), daemon=True).start()
                 
                 self.orphan_count[key] = 0 
             
@@ -1060,7 +1071,7 @@ class Node:
                 destip=sender_ip,
                 video=video_name
             )
-            self.send_tcp_message(sender_ip, teardown_msg)
+            threading.Thread(target=self.send_tcp_message, args=(sender_ip, teardown_msg), daemon=True).start()
             return
 
         # --------------------------------------------------------------
@@ -1093,7 +1104,7 @@ class Node:
                         for route in self.routing_table.get(video, []):
                             if route["is_active"]:
                                 route["is_active"] = False
-                                failed_ip = route["next_hop"] # <--- Guardar quem falhou
+                                failed_ip = route["next_hop"] 
                                 print(error_log(f"[{self.node_id}] Rota falhou via {failed_ip}"))
                         
                         self.last_rtp_time.pop(video, None)
@@ -1104,10 +1115,20 @@ class Node:
                         if failed_ip and has_clients:
                             print(warning_log(f"[{self.node_id}] A procurar alternativa (exceto {failed_ip})..."))
                             
-                            # AQUI: Usamos o exclude_ip
                             best_neigh = self.find_best_active_neighbour(video, exclude_ip=failed_ip)
                             
                             if best_neigh:
+                                # --- CORREÇÃO AQUI (ADICIONAR ESTE BLOCO) ---
+                                # Antes de enviar o pedido, marcamos a rota como ativa.
+                                # Nota: Já estamos dentro de um 'with self.lock', por isso não precisamos de outro.
+                                if video in self.routing_table:
+                                    for r in self.routing_table[video]:
+                                        if r["next_hop"] == best_neigh:
+                                            r["is_active"] = True
+                                            print(route_log(f"[{self.node_id}] Rota de emergência pré-ativada via {best_neigh}"))
+                                            break
+                                # --------------------------------------------
+
                                 print(route_log(f"[{self.node_id}] Alternativa encontrada: {best_neigh}. A enviar START."))
                                 start_msg = Message.create_stream_start_message(
                                     srcip=self.node_ip, destip=best_neigh, video=video
@@ -1115,7 +1136,7 @@ class Node:
                                 self.send_tcp_message(best_neigh, start_msg)
                             else:
                                 print(error_log(f"[{self.node_id}] Nenhuma outra rota disponível."))
-    
+                                
     def activate_route(self, video, neighbor_ip):
         """Marca a rota como ativa **apenas se o vizinho estiver ativo**."""
 

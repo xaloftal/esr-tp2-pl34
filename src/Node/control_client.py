@@ -228,9 +228,6 @@ if __name__ == "__main__":
     
     threading.Thread(target=client.heartbeat, daemon=True).start()
     
-    # 👉 INICIAR LISTENER TCP (FUNDAMENTAL)
-    listener_thread = threading.Thread(target=client.listener_tcp, daemon=True)
-    listener_thread.start()
     
     # Criar GUI
     root = Tk()

@@ -5,18 +5,23 @@ import os
 import sys
 from aux_files.RtpPacket import RtpPacket
 # Certifica-te que o import está correto conforme a tua estrutura de pastas
-from aux_files.VideoStream import VideoStream 
+from aux_files.VideoStream import VideoStream
+from aux_files.video_mapping import video_name_to_ssrc 
 
 class RtpServer(threading.Thread):
 
-    def __init__(self, video_file, client_ip, client_port):
+    def __init__(self, video_file, video_name, client_ip, client_port):
         super().__init__(daemon=True)
         self.video_file = video_file
+        self.video_name = video_name  # Name used for SSRC calculation
         self.client_ip = client_ip
         self.client_port = client_port
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.running = True
         self.seqnum = 0
+        
+        # Calculate SSRC from video NAME (not path)
+        self.ssrc = video_name_to_ssrc(video_name)
         
         # Calcular o path absoluto
         self.video_path = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "videos", self.video_file))
@@ -46,7 +51,8 @@ class RtpServer(threading.Thread):
             packet.encode(
                 version=2, padding=0, extension=0, cc=0,
                 seqnum=self.seqnum, marker=0, pt=26,
-                ssrc=0, payload=data
+                ssrc=self.ssrc, payload=data,
+                video_name=self.video_name  # Include video name in payload
             )
             
             self.sock.sendto(packet.getPacket(), (self.client_ip, self.client_port))

@@ -8,7 +8,7 @@ class RtpPacket:
 	def __init__(self):
 		pass
 		
-	def encode(self, version, padding, extension, cc, seqnum, marker, pt, ssrc, payload):
+	def encode(self, version, padding, extension, cc, seqnum, marker, pt, ssrc, payload, video_name=None):
 		"""Encode the RTP packet with header fields and payload."""
 		timestamp = int(time())
 		header = bytearray(HEADER_SIZE) 
@@ -30,7 +30,14 @@ class RtpPacket:
 		header[11] = ssrc & 0xFF
 		# set header and  payload
 		self.header = header
-		self.payload = payload
+		# Prepend video name to payload if provided
+		if video_name:
+			video_name_bytes = video_name.encode('utf-8')
+			name_length = len(video_name_bytes)
+			# Format: [1 byte length][name bytes][payload]
+			self.payload = bytes([name_length]) + video_name_bytes + payload
+		else:
+			self.payload = payload
 		
 	def decode(self, byteStream):
 		"""Decode the RTP packet."""
@@ -56,9 +63,39 @@ class RtpPacket:
 		pt = self.header[1] & 127
 		return int(pt)
 	
+	def ssrc(self):
+		"""Return SSRC (Synchronization Source)."""
+		ssrc = self.header[8] << 24 | self.header[9] << 16 | self.header[10] << 8 | self.header[11]
+		return int(ssrc)
+	
 	def getPayload(self):
 		"""Return payload."""
 		return self.payload
+	
+	def getVideoName(self):
+		"""Extract video name from payload if present."""
+		if len(self.payload) < 1:
+			return None
+		try:
+			name_length = self.payload[0]
+			if len(self.payload) < name_length + 1:
+				return None
+			video_name = self.payload[1:name_length+1].decode('utf-8')
+			return video_name
+		except:
+			return None
+	
+	def getFramePayload(self):
+		"""Return just the frame data without video name prefix."""
+		if len(self.payload) < 1:
+			return self.payload
+		try:
+			name_length = self.payload[0]
+			if len(self.payload) < name_length + 1:
+				return self.payload
+			return self.payload[name_length+1:]
+		except:
+			return self.payload
 		
 	def getPacket(self):
 		"""Return RTP packet."""

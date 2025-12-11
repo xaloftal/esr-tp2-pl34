@@ -74,7 +74,8 @@ class ControlClient():
                     rtpPacket = RtpPacket()
                     rtpPacket.decode(data)
                     
-                    payload = rtpPacket.getPayload()
+                    # Get frame payload without video name prefix
+                    payload = rtpPacket.getFramePayload()
                     currFrameNbr = rtpPacket.seqNum()
                     
                     
@@ -193,26 +194,25 @@ class ControlClient():
                     self.send_tcp_message(neigh, Message.create_alive_message(self.node_ip, neigh))
     
     def stop_stream(self):
-        """Envia pedido para parar o stream antes de sair."""
+        """Envia pedido para parar o stream para TODOS os vizinhos ativos."""
         if not self.video:
             return
 
+        print(f"[Cliente] A enviar TEARDOWN para fechar stream {self.video}...")
         
-        gateway_ip = None
-        for ip, active in self.neighbors.items():
+        msg = Message(
+            msg_type=MsgType.TEARDOWN, 
+            srcip=self.node_ip, 
+            # O destip aqui será preenchido no loop
+            destip="", 
+            payload={"video": self.video}
+        )
+
+        # Enviar para TODOS os vizinhos ativos para garantir que a rota fecha
+        for neigh_ip, active in self.neighbors.items():
             if active:
-                gateway_ip = ip
-                break
-        
-        if gateway_ip:
-            print(f"[Cliente] A enviar TEARDOWN para {gateway_ip}...")
-            msg = Message(
-                msg_type=MsgType.TEARDOWN, 
-                srcip=self.node_ip, 
-                destip=gateway_ip,
-                payload={"video": self.video}
-            )
-            self.send_tcp_message(gateway_ip, msg)
+                msg.destip = neigh_ip # Atualizar destino
+                self.send_tcp_message(neigh_ip, msg)
 
 if __name__ == "__main__":    
     if len(sys.argv) < 4:
@@ -228,18 +228,8 @@ if __name__ == "__main__":
     
     threading.Thread(target=client.heartbeat, daemon=True).start()
     
-    # 👉 INICIAR LISTENER TCP (FUNDAMENTAL)
-    listener_thread = threading.Thread(target=client.listener_tcp, daemon=True)
-    listener_thread.start()
     
     # Criar GUI
-    root = Tk()
-    app = ClienteGUI(root, client)
-    root.title(f"Cliente RTP - {node_id}")
-
-
-    root.mainloop()
-    # Inicia a GUI
     root = Tk()
     app = ClienteGUI(root, client)
     root.title(f"Cliente RTP - {node_id}")

@@ -18,21 +18,20 @@ class ClienteGUI:
         self.master.protocol("WM_DELETE_WINDOW", self.handler)
         self.client = client
         self.addr = client.node_ip
-        
-        # O cliente usa RTPport, vamos inicializar self.rtpPort (corrigindo o erro)
-        self.rtpPort = client.RTPport 
-        self.port = self.rtpPort # 'self.port' já existia, mas vamos mantê-lo
-        
+        self.port = client.RTPport
         self.rtspSeq = 0
         self.sessionId = 0
         self.requestSent = -1
         self.teardownAcked = 0
         self.frameNbr = 0
+        self.createWidgets()
+        #self.openRtpPort()
+        # Don't call playMovie here - let user click Play button
+        # self.playMovie()
+  
+  
         
         self.createWidgets()
-        # self.openRtpPort()
-        
-        self.openRtpPort() # Chamada única aqui
   
     def createWidgets(self):
         """Build GUI."""
@@ -120,8 +119,12 @@ class ClienteGUI:
     
     def exitClient(self):
         """Teardown button handler."""
-        self.master.destroy() # Close the gui window
-        os.remove(CACHE_FILE_NAME + str(self.sessionId) + CACHE_FILE_EXT) 
+        self.client.stop_stream()
+        self.master.destroy()
+        # Remove cache file
+        file_path = CACHE_FILE_NAME + "0" + CACHE_FILE_EXT # 0 is session ID
+        if os.path.exists(file_path):
+            os.remove(file_path) 
 
     def pauseMovie(self):
         """Pause button handler."""
@@ -149,7 +152,8 @@ class ClienteGUI:
                                         
                     if currFrameNbr > self.frameNbr: # Discard the late packet
                         self.frameNbr = currFrameNbr
-                        self.updateMovie(self.writeFrame(rtpPacket.getPayload()))
+                        # Get frame payload without video name prefix
+                        self.updateMovie(self.writeFrame(rtpPacket.getFramePayload()))
             except:
                 # Stop listening upon requesting PAUSE or TEARDOWN
                 if self.playEvent.isSet(): 
@@ -176,25 +180,17 @@ class ClienteGUI:
         self.label.image = photo
         
     
-    # Ficheiro: aux_files/ClienteGUI.py
-
-    # Ficheiro: aux_files/ClienteGUI.py (Linha ~188)
-
     def openRtpPort(self):
         """Open RTP socket binded to a specified port."""
         # Create a new datagram socket to receive RTP packets from the server
         self.rtpSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        
-        #Reutilização da porta
-        self.rtpSocket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        # ------------------------------------------
         
         # Set the timeout value of the socket to 0.5sec
         self.rtpSocket.settimeout(0.5)
         
         try:
             # Bind the socket to the address using the RTP port
-            self.rtpSocket.bind((self.addr, self.rtpPort)) # Usa self.rtpPort
+            self.rtpSocket.bind((self.addr, self.port))
             print('\nBind \n')
         except Exception as e:
             # Garante que a mensagem de erro usa self.rtpPort

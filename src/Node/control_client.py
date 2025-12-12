@@ -213,6 +213,8 @@ class ControlClient():
             if active:
                 msg.destip = neigh_ip # Atualizar destino
                 self.send_tcp_message(neigh_ip, msg)
+                
+                
 
 if __name__ == "__main__":    
     if len(sys.argv) < 4:

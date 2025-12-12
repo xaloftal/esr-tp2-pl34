@@ -13,6 +13,7 @@ class ClienteGUI:
         self.master = master
         self.master.protocol("WM_DELETE_WINDOW", self.handler)
         self.client = client
+        self.is_paused = False
         
         # Ligar o callback do cliente à GUI para receber mensagens PONG
         self.client.gui_callback = self.gui_msg_handler
@@ -32,6 +33,12 @@ class ClienteGUI:
         self.start["text"] = "Play"
         self.start["command"] = self.playMovie
         self.start.grid(row=1, column=1, padx=2, pady=2)
+        
+        # create Pause button
+        self.pause = Button(self.master, width=20, padx=3, pady=3)
+        self.pause["text"] = "Pause"
+        self.pause["command"] = self.pauseMovie
+        self.pause.grid(row=1, column=2, padx=2, pady=2)
         
         # Create Teardown button
         self.teardown = Button(self.master, width=20, padx=3, pady=3)
@@ -89,24 +96,34 @@ class ClienteGUI:
         """Teardown button handler."""
         self.client.stop_stream()
         self.master.destroy()
+        
+        file_path = CACHE_FILE_NAME + "0" + CACHE_FILE_EXT
+        if os.path.exists(file_path):
+            os.remove(file_path)
 
     def playMovie(self):
         """Play button handler."""
         # Inicia a thread de escuta RTP no ControlClient, passando o callback de update
         # NOTA: O ControlClient é que gere o socket!
+        self.is_paused = False
         threading.Thread(target=self.client.listen_rtp, args=(self.updateMovie,), daemon=True).start()
+        
+    def pauseMovie(self):
+        """Pause button handler."""
+        self.is_paused = True
 
     def updateMovie(self, imageFile):
         """Update the image file as video frame in the GUI."""
-        try:
-            # Tenta abrir a imagem
-            im = Image.open(imageFile)
-            photo = ImageTk.PhotoImage(im)
-            
-            self.label.configure(image = photo, height=288) 
-            self.label.image = photo
-        except Exception as e:
-            pass
+        if not self.is_paused:
+            try:
+                # Tenta abrir a imagem
+                im = Image.open(imageFile)
+                photo = ImageTk.PhotoImage(im)
+                
+                self.label.configure(image = photo, height=288) 
+                self.label.image = photo
+            except Exception as e:
+                pass
 
     def sendPing(self):
         self.pongLabel.config(text="") # limpar resposta anterior

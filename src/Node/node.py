@@ -264,7 +264,7 @@ class Node:
 
             # O destino FINAL (cliente) verifica se este nó é o destino final
             if self.node_ip == msg.get_dest():
-                print(rtp_log(f"[{self.node_id}] 🎉 PONG chegou ao CLIENTE FINAL!"))
+                print(rtp_log(f"[{self.node_id}] PONG chegou ao CLIENTE FINAL!"))
                 return
 
             # Descobrir hop seguinte (voltar para trás na rota)
@@ -450,10 +450,8 @@ class Node:
                         self.routing_table[video].append(new_route)
                         print(flood_log(f"[{self.node_id}] Rota Extra {video}: via {src_ip}"))
 
-        # ======================================================================
         # LÓGICA DE OTIMIZAÇÃO (SWITCHOVER)
-        # ======================================================================
-        
+    
         # Só faz sentido verificar se eu estou atualmente a consumir este vídeo
         has_clients = (video in self.downstream_clients and len(self.downstream_clients[video]) > 0)
         
@@ -482,8 +480,6 @@ class Node:
                 current_score = current_active_route["score"]
                 
                 # 2. Histerese: Só muda se for SIGNIFICATIVAMENTE melhor 
-                # (ex: novo score é < 70% do atual, ou seja, 30% melhor)
-                # Isto evita o efeito "ping-pong" entre rotas com qualidade semelhante.
                 threshold = 0.7 
                 
                 if new_score < (current_score * threshold):
@@ -1093,50 +1089,65 @@ class Node:
             time.sleep(1)
             now = time.time()
             
+            # --- FASE 1: Detetar falhas (DENTRO DO LOCK) ---
+            
+            failover_actions = [] 
+
             with self.lock:
+                # Usar list() para criar cópia e evitar erro de iteração
                 for video, last_ts in list(self.last_rtp_time.items()):
                     if now - last_ts > self.rtp_timeout:
                         print(warning_log(f"[{self.node_id}] ALERTA: Silêncio RTP em {video}."))
                         
                         failed_ip = None
-                        
-                        # 1. Desativar rotas e descobrir quem falhou
+                        # Desativar rota atual
                         for route in self.routing_table.get(video, []):
                             if route["is_active"]:
                                 route["is_active"] = False
-                                failed_ip = route["next_hop"] 
+                                failed_ip = route["next_hop"]
                                 print(error_log(f"[{self.node_id}] Rota falhou via {failed_ip}"))
                         
                         self.last_rtp_time.pop(video, None)
-
-                        # 2. FAILOVER (Ignorando o failed_ip)
-                        has_clients = (video in self.downstream_clients and len(self.downstream_clients[video]) > 0)
                         
+                        # Guardar dados para tentar failover
+                        has_clients = (video in self.downstream_clients and self.downstream_clients[video])
                         if failed_ip and has_clients:
-                            print(warning_log(f"[{self.node_id}] A procurar alternativa (exceto {failed_ip})..."))
-                            
-                            best_neigh = self.find_best_active_neighbour(video, exclude_ip=failed_ip)
-                            
-                            if best_neigh:
-                                # --- CORREÇÃO AQUI (ADICIONAR ESTE BLOCO) ---
-                                # Antes de enviar o pedido, marcamos a rota como ativa.
-                                # Nota: Já estamos dentro de um 'with self.lock', por isso não precisamos de outro.
-                                if video in self.routing_table:
-                                    for r in self.routing_table[video]:
-                                        if r["next_hop"] == best_neigh:
-                                            r["is_active"] = True
-                                            print(route_log(f"[{self.node_id}] Rota de emergência pré-ativada via {best_neigh}"))
-                                            break
-                                # --------------------------------------------
+                            failover_actions.append((video, failed_ip))
 
-                                print(route_log(f"[{self.node_id}] Alternativa encontrada: {best_neigh}. A enviar START."))
-                                start_msg = Message.create_stream_start_message(
-                                    srcip=self.node_ip, destip=best_neigh, video=video
-                                )
-                                self.send_tcp_message(best_neigh, start_msg)
-                            else:
-                                print(error_log(f"[{self.node_id}] Nenhuma outra rota disponível."))
-                                
+            # --- FASE 2: Executar Failover  ---
+            for video, failed_ip in failover_actions:
+                with self.lock: # Voltamos a bloquear para ler/escrever na tabela
+                    print(warning_log(f"[{self.node_id}] A procurar alternativa (exceto {failed_ip})..."))
+                    best_neigh = self.find_best_active_neighbour(video, exclude_ip=failed_ip)
+                    
+                    if best_neigh:
+                        # 1. Ativar rota preliminarmente
+                        route_obj = None
+                        if video in self.routing_table:
+                            for r in self.routing_table[video]:
+                                if r["next_hop"] == best_neigh:
+                                    r["is_active"] = True
+                                    route_obj = r
+                                    print(route_log(f"[{self.node_id}] Rota pré-ativada via {best_neigh}"))
+                                    break
+                        
+                        # 2. Tentar enviar START
+                        try:
+                            start_msg = Message.create_stream_start_message(
+                                srcip=self.node_ip, destip=best_neigh, video=video
+                            )
+                            # Se isto falhar, o except apanha
+                            self.send_tcp_message(best_neigh, start_msg)
+                            print(route_log(f"[{self.node_id}] START enviado com sucesso para {best_neigh}"))
+
+                        except Exception as e:
+                            # 3. ROLLBACK: Se o envio falhou, desativamos a rota imediatamente!
+                            print(error_log(f"[{self.node_id}] Falha ao enviar START para {best_neigh}: {e}"))
+                            if route_obj:
+                                route_obj["is_active"] = False # 
+                    else:
+                        print(error_log(f"[{self.node_id}] Nenhuma outra rota disponível."))
+
     def activate_route(self, video, neighbor_ip):
         """Marca a rota como ativa **apenas se o vizinho estiver ativo**."""
 
@@ -1203,9 +1214,8 @@ class Node:
         return None
 
 
-# ------------------------------------------------------------------
 # MAIN (Ponto de Entrada)
-# ------------------------------------------------------------------
+
 if __name__ == "__main__":
     if len(sys.argv) < 4: 
         print("Uso: python3 node.py NODE_ID NODE_IP BOOTSTRAPPER_IP [--server] VIDEO  ")

@@ -74,30 +74,28 @@ class ControlClient():
                     rtpPacket = RtpPacket()
                     rtpPacket.decode(data)
                     
-                    # Get frame payload without video name prefix
                     payload = rtpPacket.getFramePayload()
                     currFrameNbr = rtpPacket.seqNum()
                     
-                    
-                    if currFrameNbr > self.frameNbr:
+                    # --- CORREÇÃO AQUI ---
+                    # Aceitamos se for maior (sequência normal)
+                    # OU se a diferença for muito grande (indica que o vídeo reiniciou ou trocámos para fonte resetada)
+                    if currFrameNbr > self.frameNbr or (self.frameNbr - currFrameNbr > 100):
                         self.frameNbr = currFrameNbr
                         
-                        # Proteção: Só processa se tiver dados reais
                         if len(payload) > 0:
-                            image_file = self.write_frame(payload)
-                            
                             if gui_update_callback:
                                 try:
-                                    gui_update_callback(image_file)
+                                    gui_update_callback(payload)
                                 except Exception as e:
-                                    # Se a imagem for má, apenas ignoramos este frame e não matamos a thread
-                                    print(f"[GUI] Frame {currFrameNbr} corrompido ou incompleto. Ignorar.")
-                        
+                                    print(f"[GUI] Erro frame {currFrameNbr}: {e}")
+                    
             except socket.timeout:
                 continue
             except Exception as e:
                 print(f"[Cliente] RTP Interrompido: {e}")
                 break
+
     def write_frame(self, data):
         """Escreve o payload (imagem JPEG) num ficheiro temporário."""
         cachename = CACHE_FILE_NAME + str(self.sessionId) + CACHE_FILE_EXT

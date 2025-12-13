@@ -3,6 +3,7 @@ import tkinter.messagebox as tkMessageBox
 from PIL import Image, ImageTk
 import threading, os
 from aux_files.aux_message import Message
+import io
 
 CACHE_FILE_NAME = "cache-"
 CACHE_FILE_EXT = ".jpg"
@@ -95,11 +96,9 @@ class ClienteGUI:
     def exitClient(self):
         """Teardown button handler."""
         self.client.stop_stream()
-        self.master.destroy()
         
-        file_path = CACHE_FILE_NAME + "0" + CACHE_FILE_EXT
-        if os.path.exists(file_path):
-            os.remove(file_path)
+        # Dá tempo para a mensagem sair antes de matar a janela
+        self.master.after(200, self.master.destroy)
 
     def playMovie(self):
         """Play button handler."""
@@ -112,18 +111,30 @@ class ClienteGUI:
         """Pause button handler."""
         self.is_paused = True
 
-    def updateMovie(self, imageFile):
-        """Update the image file as video frame in the GUI."""
+    def updateMovie(self, image_data):
+        """
+        Recebe BYTES (image_data) em vez de nome de ficheiro.
+        Agenda a atualização na thread principal (Thread-Safe).
+        """
         if not self.is_paused:
-            try:
-                # Tenta abrir a imagem
-                im = Image.open(imageFile)
-                photo = ImageTk.PhotoImage(im)
-                
-                self.label.configure(image = photo, height=288) 
-                self.label.image = photo
-            except Exception as e:
-                pass
+            # Passamos os dados para a thread principal processar
+            self.master.after(0, self._update_image_internal, image_data)
+            
+    def _update_image_internal(self, image_data):
+        """Processa a imagem na MainThread para não crashar o Tkinter."""
+        try:
+            # Transforma os bytes num stream em memória (como se fosse um ficheiro)
+            image_stream = io.BytesIO(image_data)
+            
+            # Abre a imagem a partir da RAM
+            im = Image.open(image_stream)
+            photo = ImageTk.PhotoImage(im)
+            
+            self.label.configure(image=photo, height=288) 
+            self.label.image = photo
+        except Exception as e:
+            # Se o pacote vier corrompido, ignoramos
+            pass
 
     def sendPing(self):
         self.pongLabel.config(text="") # limpar resposta anterior

@@ -7,6 +7,8 @@ import uuid
 from enum import Enum
 import json
 import socket
+import copy
+
 
 from control_server import ControlServer
 from control_client import ControlClient
@@ -219,6 +221,8 @@ class Node:
             
         elif msg_type == MsgType.STREAM_START:
             self.handle_stream_start(msg)
+        elif msg_type == MsgType.PING_TEST:
+            self.handle_pingtest_message(msg)
 
         elif msg_type == MsgType.PING:
             print(rtp_log("\n" + "="*60))
@@ -624,7 +628,60 @@ class Node:
                     print(route_log(f"[{self.node_id}] Cliente downstream {dead_ip} removido de {video} (LEAVE)."))
 
         # NÃO PROPAGAR LEAVE aos outros vizinhos
+    # ETAPA 3: DIAGNÓSTICO DE ROTAS (PING / TRACEROUTE)
+    # -------------------------------------------------------------------------
 
+    def start_overlay_probe(self, video_name):
+        """
+        (Apenas Servidor) Inicia um PING para testar a rota ativa de um vídeo.
+        """
+        if not self.is_server:
+            print(f"[{self.node_id}] Erro: Apenas o servidor pode iniciar o PING de rota.")
+            return
+
+        # Verificar se há alguém a ver este vídeo
+        if video_name not in self.downstream_clients or not self.downstream_clients[video_name]:
+            print(f"[{self.node_id}] PING abortado: Ninguém está a ver '{video_name}' (Rota inativa).")
+            return
+
+        print(f"[{self.node_id}] A iniciar PING/Traceroute para '{video_name}'...")
+        
+        # O caminho começa comigo
+        initial_path = [self.node_id]
+
+        # Enviar para todos os vizinhos que estão a receber o vídeo (Downstream)
+        for child_ip in self.downstream_clients[video_name]:
+            msg = Message.create_pingtest_message(
+                srcip=self.node_ip,
+                destip=child_ip, # Irrelevante aqui pois usamos TCP direto, mas boa prática
+                video_name=video_name,
+                current_path=initial_path
+            )
+            self.send_tcp_message(child_ip, msg)
+
+    def handle_pingtest_message(self, msg):
+        """
+        Processes the PING: logs passage, updates path, and forwards if downstream clients exist.
+        """
+        payload = msg.get_payload()
+        video_name = payload.get("video")
+        path_so_far = payload.get("path", [])
+
+        new_path = path_so_far + [self.node_id]
+        
+        print(f"[{self.node_id}] PING recebido! Rota atual: {' -> '.join(new_path)}")
+
+        # Check if there is a valid route (non-empty list) for this video
+        destinations = self.downstream_clients.get(video_name, [])
+        if destinations:
+            msg_clone = copy.deepcopy(msg)          
+            msg_clone.payload["path"] = new_path            
+            print("BOAS - O clone foi criado com sucesso!")
+
+            for child_ip in destinations:
+                self.send_tcp_message(child_ip, msg_clone)
+        
+            
     def handle_join_message(self, msg):
         neigh_ip = msg.get_src() if isinstance(msg, Message) else msg.get("srcip")
 
@@ -672,6 +729,11 @@ class Node:
                 has_video = (self.server.video == video)
             
             if has_video:
+                if video not in self.downstream_clients:
+                    self.downstream_clients[video] = []
+                
+                if msg_sender not in self.downstream_clients[video]:
+                    self.downstream_clients[video].append(msg_sender)
                 print(stream_log(f"[{self.node_id}] Pedido de stream {video} recebido de {msg_sender}. A iniciar envio..."))
                 self.server.start_stream_to_client(msg_sender, video)
             else:
@@ -1285,7 +1347,7 @@ if __name__ == "__main__":
 
     # 3. Loop de comandos interativos
     if node.is_server:
-        prompt_text = f"[{node.node_id}] (Servidor) Comando (flood / routes / neigh / exit): \n"
+        prompt_text = f"[{node.node_id}] (Servidor) Comando (flood / ping / routes / neigh / exit): \n"
     else:
         prompt_text = f"[{node.node_id}] (Nó)  Comando (routes / neigh / leave / exit): \n "
 
@@ -1298,6 +1360,9 @@ if __name__ == "__main__":
                     node.start_flood()
                 else:
                     print(error_log("Erro: Apenas o servidor pode iniciar um 'flood'."))
+            elif cmd == "ping":
+                if node.is_server:
+                    node.start_overlay_probe(video)        
                     
             elif cmd == "routes":
                 print(f"[{node.node_id}] Tabela de Rotas:")

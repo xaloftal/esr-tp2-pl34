@@ -177,12 +177,34 @@ class ControlClient():
             print(f"[Cliente] Recebido LEAVE de {sender_ip}")
             if sender_ip in self.neighbors:
                 self.neighbors[sender_ip] = False
+        elif msg_type == MsgType.PING_TEST:
+            self.handle_pingtest_message(msg)
+            
+
         elif msg_type == MsgType.PONG:
             print(f"[Cliente] Recebi PONG de {sender_ip}")
             if hasattr(self, "gui_callback") and self.gui_callback:
                 self.gui_callback("PONG RECEBIDO")
     
             if sender_ip in self.neighbors: self.neighbors[sender_ip] = False
+
+    def handle_pingtest_message(self, msg):
+        """
+        Handles PING_TEST at the client (endpoint).
+        It finalizes the path and displays the result.
+        """
+        payload = msg.get_payload()
+        video_name = payload.get("video")
+        path_so_far = payload.get("path", [])
+
+        # Add current node (End of Line) to the path
+        full_path = path_so_far + [self.node_id]
+        path_string = " -> ".join(full_path)
+
+        print(f"[Cliente]PING RECEBIDO com sucesso para '{video_name}'!")
+        print(f"[Cliente]Rota Completa: {path_string}")
+
+
 
     def heartbeat(self):
         while True:

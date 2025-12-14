@@ -790,7 +790,7 @@ class Node:
         for neigh_ip, is_active in self.neighbors.items():
             if is_active:
                 print(flood_log(f"[{self.node_id}] A iniciar FLOOD com ID {msg_id} para stream {self.video}"))
-                print(flood_log(f"[{self.node_id}] Enviando FLOOD para {neigh_ip}"))
+                print(flood_log(f"[{self.node_id}] A enviar FLOOD para {neigh_ip}"))
                 self.send_tcp_message(neigh_ip, flood_msg)
                 
 

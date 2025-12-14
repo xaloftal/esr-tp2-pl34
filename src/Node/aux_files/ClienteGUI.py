@@ -16,7 +16,7 @@ class ClienteGUI:
         self.client = client
         self.is_paused = False
         
-        # Ligar o callback do cliente à GUI para receber mensagens PONG
+        # Bind client callback to GUI to receive PONG signals
         self.client.gui_callback = self.gui_msg_handler
         
         self.createWidgets()
@@ -62,8 +62,11 @@ class ClienteGUI:
         self.label.grid(row=0, column=0, columnspan=4, sticky=W+E+N+S, padx=5, pady=5) 
     
     def setupMovie(self):
-        """Setup button handler."""
-        # Acede ao vídeo guardado no ControlClient
+        """
+        Handler for the SETUP button.
+        Selects a neighbor and sends the SETUP request.
+        """
+        # Access video name defined in ControlClient
         video_name = self.client.video 
         
         if not video_name:
@@ -71,10 +74,10 @@ class ClienteGUI:
             return
 
         my_neighbors = self.client.neighbors 
-        
         gateway_ip = None
+        print(my_neighbors)
 
-        # Procura o primeiro vizinho ativo 
+        # Find the first active neighbor to act as gateway
         for ip, is_active in my_neighbors.items():
             if is_active:
                 gateway_ip = ip
@@ -82,29 +85,37 @@ class ClienteGUI:
         
         if gateway_ip:
             print(f"[ClientGUI] A pedir '{video_name}' ao vizinho: {gateway_ip}")
+            
             start_msg = Message.create_stream_start_message(
                 srcip=self.client.node_ip, 
                 destip=gateway_ip, 
                 video=video_name
             )
-            # Envia pedido numa thread para não bloquear GUI
+            
+            # Send request in a separate thread to avoid blocking the GUI
             threading.Thread(target=self.client.send_tcp_message, args=(gateway_ip, start_msg)).start()
         
         else:
             tkMessageBox.showerror("Erro de Conexão", "Nenhum vizinho ativo encontrado.")
 
     def exitClient(self):
-        """Teardown button handler."""
+        """
+        Handler for the TEARDOWN button.
+        Stops the stream and closes the window.
+        """
         self.client.stop_stream()
         
-        # Dá tempo para a mensagem sair antes de matar a janela
+        # Allow time for the TEARDOWN message to be sent before killing the process
         self.master.after(200, self.master.destroy)
 
     def playMovie(self):
-        """Play button handler."""
-        # Inicia a thread de escuta RTP no ControlClient, passando o callback de update
-        # NOTA: O ControlClient é que gere o socket!
+        """
+        Handler for the PLAY button.
+        """
+        # If just paused, resume
         self.is_paused = False
+
+        # Start the ControlClient RTP listener thread with the update callback
         threading.Thread(target=self.client.listen_rtp, args=(self.updateMovie,), daemon=True).start()
         
     def pauseMovie(self):
@@ -113,46 +124,54 @@ class ClienteGUI:
 
     def updateMovie(self, image_data):
         """
-        Recebe BYTES (image_data) em vez de nome de ficheiro.
-        Agenda a atualização na thread principal (Thread-Safe).
+        Callback triggered by ControlClient when a frame arrives.
+        Receives BYTES (image_data) instead of a filename.
+        Schedules the UI update on the Main Thread to be Thread-Safe.
         """
         if not self.is_paused:
-            # Passamos os dados para a thread principal processar
+            # Schedule execution on the main thread
             self.master.after(0, self._update_image_internal, image_data)
             
     def _update_image_internal(self, image_data):
-        """Processa a imagem na MainThread para não crashar o Tkinter."""
+        """
+        Internal method running on Main Thread.
+        Converts bytes to Image and updates the Tkinter Label.
+        """
         try:
-            # Transforma os bytes num stream em memória (como se fosse um ficheiro)
+            # Convert bytes to an in-memory stream
             image_stream = io.BytesIO(image_data)
             
-            # Abre a imagem a partir da RAM
+            # Open image from RAM
             im = Image.open(image_stream)
             photo = ImageTk.PhotoImage(im)
             
             self.label.configure(image=photo, height=288) 
             self.label.image = photo
         except Exception as e:
-            # Se o pacote vier corrompido, ignoramos
+            # Ignore corrupted frames to prevent crashes
             pass
 
     def sendPing(self):
-        self.pongLabel.config(text="") # limpar resposta anterior
+        """
+        Sends a PING message to the connected gateway to test latency/path.
+        """
+        self.pongLabel.config(text="") # Clear previous status
         
         neighbors = self.client.neighbors
-        
         gateway = None
+        
+        # Find active gateway
         for ip, active in neighbors.items():
             if active:
                 gateway = ip
                 break
         
         if not gateway:
-            print("Nenhum vizinho ativo!")
+            print("[ClientGUI] Nenhum vizinho ativo!")
             self.pongLabel.config(text="Sem vizinhos", fg="red")
             return
         
-        print(f"[CLIENT] A enviar PING para {gateway}")
+        print(f"[ClientGUI] A enviar PING para {gateway}")
         
         msg = Message.create_ping_message(
             srcip=self.client.node_ip,
@@ -161,11 +180,11 @@ class ClienteGUI:
         self.client.send_tcp_message(gateway, msg)
 
     def gui_msg_handler(self, msg_text):
-        """Callback para receber mensagens do cliente (ex: PONG)"""
+        """Callback to handle messages coming from ControlClient (e.g., PONG)."""
         if "PONG" in msg_text:
              self.pongLabel.config(text="PONG RECEBIDO!", fg="blue")
 
     def handler(self):
-        """Handler on explicitly closing the GUI window."""
-        if tkMessageBox.askokcancel("Quit?", "Are you sure you want to quit?"):
+        """Handler for explicitly closing the GUI window (X button)."""
+        if tkMessageBox.askokcancel("Sair?", "Tem a certeza que quer sair?"):
             self.exitClient()

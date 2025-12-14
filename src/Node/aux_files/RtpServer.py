@@ -4,67 +4,97 @@ import time
 import os
 import sys
 from aux_files.RtpPacket import RtpPacket
-# Certifica-te que o import está correto conforme a tua estrutura de pastas
 from aux_files.VideoStream import VideoStream
 from aux_files.video_mapping import video_name_to_ssrc 
 
 class RtpServer(threading.Thread):
+    """
+    RTP Server (Broadcast Mode): 
+    Runs continuously like a TV Station. 
+    Maintains a list of subscribers and sends the same frame to all of them simultaneously.
+    """
 
-    def __init__(self, video_file, video_name, client_ip, client_port):
+    def __init__(self, video_file, video_name):
         super().__init__(daemon=True)
         self.video_file = video_file
-        self.video_name = video_name  # Name used for SSRC calculation
-        self.client_ip = client_ip
-        self.client_port = client_port
+        self.video_name = video_name 
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.running = True
         self.seqnum = 0
         
-        # Calculate SSRC from video NAME (not path)
+        # SSRC based on video name
         self.ssrc = video_name_to_ssrc(video_name)
         
-        # Calcular o path absoluto
+        # Absolute path
         self.video_path = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "videos", self.video_file))
+        
+        # --- NEW: List of active subscribers (Client IP, Client Port) ---
+        self.subscribers = [] 
+        self.lock = threading.Lock() # Thread safety for adding/removing clients
+
+    def add_subscriber(self, ip, port):
+        """Adds a client to the broadcast list."""
+        with self.lock:
+            if (ip, port) not in self.subscribers:
+                self.subscribers.append((ip, port))
+                print(f"[RTP TV] Novo espectador ligado: {ip}:{port}")
+
+    def remove_subscriber(self, ip):
+        """Removes a client from the broadcast list."""
+        with self.lock:
+            # Filter out the client with this IP
+            self.subscribers = [s for s in self.subscribers if s[0] != ip]
+            print(f"[RTP TV] Espectador saiu: {ip}")
 
     def run(self):
-        print(f"[RTP] A enviar {self.video_file} para {self.client_ip}:{self.client_port}")
+        """
+        Main loop: Reads video frames continuously (Global Time).
+        Sends the packet to ALL subscribers in the list.
+        """
+        print(f"[RTP TV] A iniciar emissão contínua de: {self.video_file}")
         
         try:
             self.video_stream = VideoStream(self.video_path)
-            
         except IOError:
             print(f"[RTP] Erro: vídeo não encontrado em: {self.video_path}")
             return
 
         while self.running:
-            
+            # 1. Get next frame (The 'Time' passes for everyone)
             data = self.video_stream.nextFrame()
             
-            # Se data vier vazio, chegámos ao fim do vídeo
+            # 2. Loop video if finished
             if not data:
-                # REBOBINAR (Loop Infinito)
                 self.video_stream.rewind()
-                continue # Volta ao início do while para ler o 1º frame
+                continue 
 
-            # Criar o pacote RTP
+            # 3. Create packet (Only once per frame)
             packet = RtpPacket()
             packet.encode(
                 version=2, padding=0, extension=0, cc=0,
                 seqnum=self.seqnum, marker=0, pt=26,
                 ssrc=self.ssrc, payload=data,
-                video_name=self.video_name  # Include video name in payload
+                video_name=self.video_name
             )
-            
-            self.sock.sendto(packet.getPacket(), (self.client_ip, self.client_port))
-            
-            # O SeqNum continua a subir, mesmo após o loop, para o cliente não baralhar
+            packet_bytes = packet.getPacket()
+
+            # 4. Broadcast to all active subscribers
+            with self.lock:
+                for ip, port in self.subscribers:
+                    try:
+                        self.sock.sendto(packet_bytes, (ip, port))
+                    except:
+                        # If sending fails, we could remove the client, but let's keep simple
+                        pass
+
+            # 5. Global Sequence Number increases
             self.seqnum += 1
             
-            time.sleep(0.04)  # ~25 fps
+            # 6. Global FPS control
+            time.sleep(0.04) 
 
-        print("[RTP] Fim do stream.")
-        import sys
-        sys.stdout.flush() # Força a escrita no terminal
+        print("[RTP] Emissão encerrada.")
+        self.sock.close()
 
     def stop(self):
         self.running = False

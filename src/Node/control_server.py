@@ -88,7 +88,6 @@ class ControlServer:
             # Add client to the broadcast list
             self.channels[video_name].add_subscriber(client_ip, self.UDPport)
         else:
-            print(self.channels)
             print(f"[Servidor] Erro: Canal {video_name} não existe.")
 
     def stop_stream_to_client(self, client_ip, video_name=None):

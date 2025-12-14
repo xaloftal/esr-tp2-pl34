@@ -75,7 +75,6 @@ class ClienteGUI:
 
         my_neighbors = self.client.neighbors 
         gateway_ip = None
-        print(my_neighbors)
 
         # Find the first active neighbor to act as gateway
         for ip, is_active in my_neighbors.items():

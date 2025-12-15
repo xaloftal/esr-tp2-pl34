@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="794" height="449" viewBox="20 40 1060 600" preserveAspectRatio="xMidYMid meet">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1f6feb"/>
+    </marker>
+    <style>
+      .title { font: 700 18px sans-serif; fill: #1f6feb; }
+      .label { font: 14px sans-serif; fill: #111; }
+      .small { font: 12px sans-serif; fill: #111; }
+      .box { fill: #f2f8ff; stroke: #1f6feb; stroke-width: 1.6; }
+      .life { stroke: #94a3b8; stroke-width: 1.2; stroke-dasharray: 6 6; }
+      .msg { stroke: #1f6feb; stroke-width: 1.6; marker-end: url(#arrow); }
+      .note { fill: #ffffff; stroke: #94a3b8; stroke-width: 1.2; }
+      .teardown { stroke: #eb5757; }
+    </style>
+  </defs>
+
+
+  <!-- Participants -->
+  <rect x="40"  y="60" width="220" height="44" class="box"/>
+  <text x="60"  y="88" class="label">Cliente / Nó folha</text>
+
+  <rect x="330" y="60" width="220" height="44" class="box"/>
+  <text x="350" y="88" class="label">Nó relay</text>
+
+  <rect x="620" y="60" width="220" height="44" class="box"/>
+  <text x="640" y="88" class="label">Nó upstream</text>
+
+  <rect x="910" y="60" width="170" height="44" class="box"/>
+  <text x="930" y="88" class="label">Servidor de Stream</text>
+
+  <!-- Lifelines -->
+  <line x1="150" y1="104" x2="150" y2="620" class="life"/>
+  <line x1="440" y1="104" x2="440" y2="620" class="life"/>
+  <line x1="730" y1="104" x2="730" y2="620" class="life"/>
+  <line x1="995" y1="104" x2="995" y2="620" class="life"/>
+
+  <!-- TEARDOWN chain -->
+  <line x1="150" y1="160" x2="440" y2="160" class="msg teardown"/>
+  <text x="210" y="150" class="label">TEARDOWN (TCP)</text>
+  <text x="210" y="175" class="small">type=TEARDOWN, payload.video</text>
+
+  <rect x="290" y="188" width="520" height="92" class="note"/>
+  <text x="310" y="214" class="label">Ações do Nó relay</text>
+  <text x="310" y="236" class="small">- stop_stream_to_client(cliente, video)</text>
+  <text x="310" y="256" class="small">- remove cliente de downstream_clients[video]</text>
+
+  <line x1="440" y1="330" x2="730" y2="330" class="msg teardown"/>
+  <text x="500" y="320" class="label">TEARDOWN (TCP) para upstream</text>
+  <text x="500" y="345" class="small">Apenas se downstream_clients[video] ficar vazio</text>
+
+  <rect x="600" y="360" width="450" height="90" class="note"/>
+  <text x="620" y="386" class="label">Comportamento upstream (mesma lógica)</text>
+  <text x="620" y="408" class="small">Se não existirem clientes downstream, reencaminha TEARDOWN mais a montante.</text>
+  <text x="620" y="428" class="small">Pára o envio RTP para quem pediu o teardown.</text>
+
+  <line x1="730" y1="500" x2="995" y2="500" class="msg teardown"/>
+  <text x="785" y="490" class="label">TEARDOWN (TCP) continua…</text>
+
+  <rect x="60" y="540" width="980" height="62" class="note"/>
+  <text x="80" y="566" class="label">Propriedade chave</text>
+  <text x="80" y="588" class="small">O TEARDOWN propaga-se “para cima” até ao primeiro nó que ainda tenha outros clientes para esse vídeo.</text>
+</svg>

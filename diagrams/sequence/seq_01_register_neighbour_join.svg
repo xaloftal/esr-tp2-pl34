@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="794" height="292" viewBox="20 40 1060 400" preserveAspectRatio="xMidYMid meet">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1f6feb"/>
+    </marker>
+    <style>
+      .title { font: 700 18px sans-serif; fill: #1f6feb; }
+      .label { font: 14px sans-serif; fill: #111; }
+      .small { font: 12px sans-serif; fill: #111; }
+      .box { fill: #f2f8ff; stroke: #1f6feb; stroke-width: 1.6; }
+      .life { stroke: #94a3b8; stroke-width: 1.2; stroke-dasharray: 6 6; }
+      .msg { stroke: #1f6feb; stroke-width: 1.6; marker-end: url(#arrow); }
+      .note { fill: #ffffff; stroke: #94a3b8; stroke-width: 1.2; }
+    </style>
+  </defs>
+
+
+  <!-- Participants -->
+  <rect x="60"  y="60" width="240" height="44" class="box"/>
+  <text x="80"  y="88" class="label">Nó (a entrar)</text>
+
+  <rect x="430" y="60" width="240" height="44" class="box"/>
+  <text x="450" y="88" class="label">Bootstrapper</text>
+
+  <rect x="800" y="60" width="240" height="44" class="box"/>
+  <text x="820" y="88" class="label">Vizinho(s)</text>
+
+  <!-- Lifelines -->
+  <line x1="180" y1="104" x2="180" y2="410" class="life"/>
+  <line x1="550" y1="104" x2="550" y2="410" class="life"/>
+  <line x1="920" y1="104" x2="920" y2="410" class="life"/>
+
+  <!-- Messages -->
+  <line x1="180" y1="150" x2="550" y2="150" class="msg"/>
+  <text x="250" y="140" class="label">REGISTER (TCP)</text>
+  <text x="250" y="165" class="small">type=REGISTER, payload.node_id</text>
+
+  <line x1="550" y1="200" x2="180" y2="200" class="msg"/>
+  <text x="260" y="190" class="label">NEIGHBOUR (TCP)</text>
+  <text x="260" y="215" class="small">type=NEIGHBOUR, payload.neighbours=[...]</text>
+
+  <line x1="180" y1="270" x2="920" y2="270" class="msg"/>
+  <text x="330" y="260" class="label">JOIN (TCP)</text>
+  <text x="330" y="285" class="small">type=JOIN, payload.node_id</text>
+
+  <rect x="200" y="300" width="720" height="92" class="note"/>
+  <text x="220" y="325" class="label">Estado atualizado nos nós</text>
+  <text x="220" y="347" class="small">neighbors[neigh_ip] = True/False consoante a alcançabilidade TCP</text>
+  <text x="220" y="368" class="small">last_alive[neigh_ip] inicializado para vizinhos ativos</text>
+</svg>

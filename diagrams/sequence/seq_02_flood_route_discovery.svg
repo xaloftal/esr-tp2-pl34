@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="794" height="442" viewBox="20 40 1090 480" preserveAspectRatio="xMidYMid meet">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1f6feb"/>
+    </marker>
+    <style>
+      .title { font: 700 18px sans-serif; fill: #1f6feb; }
+      .label { font: 14px sans-serif; fill: #111; }
+      .small { font: 12px sans-serif; fill: #111; }
+      .box { fill: #f2f8ff; stroke: #1f6feb; stroke-width: 1.6; }
+      .life { stroke: #94a3b8; stroke-width: 1.2; stroke-dasharray: 6 6; }
+      .msg { stroke: #1f6feb; stroke-width: 1.6; marker-end: url(#arrow); }
+      .note { fill: #ffffff; stroke: #94a3b8; stroke-width: 1.2; }
+    </style>
+  </defs>
+
+
+  <!-- Participants -->
+  <rect x="40"  y="60" width="220" height="44" class="box"/>
+  <text x="60"  y="88" class="label">Servidor de Stream</text>
+
+  <rect x="330" y="60" width="220" height="44" class="box"/>
+  <text x="350" y="88" class="label">Nó A</text>
+
+  <rect x="620" y="60" width="220" height="44" class="box"/>
+  <text x="640" y="88" class="label">Nó B</text>
+
+  <rect x="910" y="60" width="170" height="44" class="box"/>
+  <text x="930" y="88" class="label">… outros</text>
+
+  <!-- Lifelines -->
+  <line x1="150" y1="104" x2="150" y2="610" class="life"/>
+  <line x1="440" y1="104" x2="440" y2="610" class="life"/>
+  <line x1="730" y1="104" x2="730" y2="610" class="life"/>
+  <line x1="995" y1="104" x2="995" y2="610" class="life"/>
+
+  <!-- Messages -->
+  <line x1="150" y1="150" x2="440" y2="150" class="msg"/>
+  <text x="200" y="140" class="label">FLOOD (TCP)</text>
+  <text x="200" y="165" class="small">type=FLOOD, payload={video, hop_count, origin_ip, start_timestamp, accumulated_metrics}</text>
+
+  <rect x="320" y="175" width="360" height="86" class="note"/>
+  <text x="340" y="200" class="label">Processamento no Nó A</text>
+  <text x="340" y="222" class="small">- calcula métricas do salto (latência/jitter/perdas) e o score</text>
+  <text x="340" y="242" class="small">- atualiza routing_table[video] com next_hop=srcip (salto anterior)</text>
+
+  <line x1="440" y1="300" x2="730" y2="300" class="msg"/>
+  <text x="485" y="290" class="label">FLOOD (TCP) retransmissão</text>
+  <text x="485" y="315" class="small">hop_count+1, accumulated_metrics atualizado</text>
+
+  <rect x="610" y="325" width="360" height="86" class="note"/>
+  <text x="630" y="350" class="label">Processamento no Nó B</text>
+  <text x="630" y="372" class="small">- mesma atualização de métricas e recomputação do score</text>
+  <text x="630" y="392" class="small">- cache evita ciclos: key=(origin_ip,flood_id=Message.id)</text>
+
+  <line x1="730" y1="450" x2="995" y2="450" class="msg"/>
+  <text x="770" y="440" class="label">FLOOD (TCP) continua…</text>
+
+</svg>

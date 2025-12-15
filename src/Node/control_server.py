@@ -82,7 +82,6 @@ class ControlServer:
         """
         
         if video_name in self.channels:
-            print(f"[Servidor] Cliente {client_ip} subscreveu ao canal {video_name}")
             # Add client to the broadcast list
             self.channels[video_name].add_subscriber(client_ip, self.UDPport)
         else:

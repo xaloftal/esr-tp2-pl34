@@ -244,6 +244,21 @@ annotation a6 {
     canvas c1
 }
 
+annotation a7 {
+    iconcoords {518 307 724 366}
+    type rectangle
+    label {Bootstrapper - 10.0.1.1 (n2)}
+    labelcolor black
+    fontfamily {Arial}
+    fontsize {12}
+    color #ececbc
+    width 0
+    border black
+    rad 6
+    effects {italic underline}
+    canvas c1
+}
+
 canvas c1 {
     name {Canvas1}
 }

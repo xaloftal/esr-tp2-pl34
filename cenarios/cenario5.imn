@@ -885,10 +885,25 @@ annotation a12 {
     label {S2 - 10.0.21.10}
     labelcolor black
     fontfamily {Arial}
-    fontsize 12
+    fontsize {12}
     color #ecbcbc
     width 0
     border black
+    effects {italic underline}
+    canvas c1
+}
+
+annotation a13 {
+    iconcoords {677.0 473.0 895.0 524.0}
+    type rectangle
+    label {Bootstrapper - 10.0.4.2 (a2)}
+    labelcolor black
+    fontfamily {Arial}
+    fontsize 12
+    color #ececbc
+    width 0
+    border black
+    rad 6
     effects {italic underline}
     canvas c1
 }

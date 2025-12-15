@@ -79,12 +79,7 @@ class ControlClient():
                     rtpPacket = RtpPacket()
                     rtpPacket.decode(data)
                     
-<<<<<<< HEAD
-                    # Get frame payload without video name prefix (Bytes JPEG)
-                    payload = rtpPacket.getFramePayload() 
-=======
                     payload = rtpPacket.getFramePayload()
->>>>>>> 18549a5c69c3fd51e161d7e06a8b9ffb8435a590
                     currFrameNbr = rtpPacket.seqNum()
                     
                     # --- CORREÇÃO AQUI ---
@@ -94,42 +89,17 @@ class ControlClient():
                         self.frameNbr = currFrameNbr
                         
                         if len(payload) > 0:
-<<<<<<< HEAD
-                            # --- CORREÇÃO: CARREGAR IMAGEM IN-MEMORY (SEM DISCO) ---
-                            try:
-                                # Carrega os bytes JPEG para um stream na memória
-                                image_stream = BytesIO(payload)
-                                # Abre a imagem a partir desse stream de memória (Objeto PIL Image)
-                                image_obj = Image.open(image_stream) 
-                                
-                                if gui_update_callback:
-                                    # Passa o OBJETO Image PIL diretamente para a GUI
-                                    gui_update_callback(image_obj) 
-                                    
-                            except Exception as e:
-                                # Se o frame estiver corrompido, ignoramos.
-                                # print(f"[GUI] Frame {currFrameNbr} corrompido ou incompleto: {e}. Ignorar.")
-                                pass 
-                            # --------------------------------------------------------
-                        
-=======
                             if gui_update_callback:
                                 try:
                                     gui_update_callback(payload)
                                 except Exception as e:
                                     print(f"[GUI] Erro frame {currFrameNbr}: {e}")
                     
->>>>>>> 18549a5c69c3fd51e161d7e06a8b9ffb8435a590
             except socket.timeout:
                 continue
             except Exception as e:
                 # print(f"[Cliente] RTP Interrompido: {e}")
                 break
-<<<<<<< HEAD
-    
-    # --- FUNÇÃO write_frame REMOVIDA PARA EVITAR ESCRITA EM DISCO ---
-    # O código antigo está no seu histórico, mas foi omitido aqui.
-=======
 
     def write_frame(self, data):
         """Escreve o payload (imagem JPEG) num ficheiro temporário."""
@@ -137,7 +107,6 @@ class ControlClient():
         with open(cachename, "wb") as file:
             file.write(data)
         return cachename
->>>>>>> 18549a5c69c3fd51e161d7e06a8b9ffb8435a590
 
     def get_neighbors(self):
         return self.neighbors

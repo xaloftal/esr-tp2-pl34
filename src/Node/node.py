@@ -680,7 +680,6 @@ class Node:
         if destinations:
             msg_clone = copy.deepcopy(msg)          
             msg_clone.payload["path"] = new_path            
-            print("BOAS - O clone foi criado com sucesso!")
 
             for child_ip in destinations:
                 self.send_tcp_message(child_ip, msg_clone)

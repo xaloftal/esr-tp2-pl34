@@ -1,4 +1,3 @@
-# Ficheiro: src/Node/control_client.py
 import json
 import socket
 import threading
@@ -6,13 +5,19 @@ import sys
 import time
 import os
 from tkinter import Tk
+# --- NOVOS IMPORTS CRÍTICOS (Para evitar disco/cache) ---
+from io import BytesIO
+from PIL import Image
+# -------------------------------------------------------
+
 from aux_files.ClienteGUI import ClienteGUI
 from aux_files.RtpPacket import RtpPacket 
 from aux_files.aux_message import Message, MsgType
 from config import NODE_TCP_PORT, NODE_RTP_PORT, BOOTSTRAPPER_PORT, HEARTBEAT_INTERVAL, FAIL_TIMEOUT, MAX_FAILS
 
-CACHE_FILE_NAME = "cache-"
-CACHE_FILE_EXT = ".jpg"
+# Estes não são usados, mas são mantidos para compatibilidade com o ClienteGUI
+CACHE_FILE_NAME = "cache-" 
+CACHE_FILE_EXT = ".jpg" 
 
 class ControlClient():
     """
@@ -29,7 +34,6 @@ class ControlClient():
         self.rtspSeq = 0
         self.frameNbr = 0
         self.neighbors = {}
-        self.register_and_join()  # vizinhos ativos
         self.gui_callback = None
         
         # --- Configuração RTP (UDP) ---
@@ -66,6 +70,7 @@ class ControlClient():
             print(f"[Cliente] Erro ao abrir socket RTP: {e}")
 
     def listen_rtp(self, gui_update_callback=None):
+        """RECEBE RTP e envia a imagem EM MEMÓRIA para a GUI."""
         while True:
             try:
                 data, addr = self.rtp_socket.recvfrom(20480)
@@ -74,36 +79,40 @@ class ControlClient():
                     rtpPacket = RtpPacket()
                     rtpPacket.decode(data)
                     
-                    # Get frame payload without video name prefix
-                    payload = rtpPacket.getFramePayload()
+                    # Get frame payload without video name prefix (Bytes JPEG)
+                    payload = rtpPacket.getFramePayload() 
                     currFrameNbr = rtpPacket.seqNum()
                     
                     
                     if currFrameNbr > self.frameNbr:
                         self.frameNbr = currFrameNbr
                         
-                        # Proteção: Só processa se tiver dados reais
                         if len(payload) > 0:
-                            image_file = self.write_frame(payload)
-                            
-                            if gui_update_callback:
-                                try:
-                                    gui_update_callback(image_file)
-                                except Exception as e:
-                                    # Se a imagem for má, apenas ignoramos este frame e não matamos a thread
-                                    print(f"[GUI] Frame {currFrameNbr} corrompido ou incompleto. Ignorar.")
+                            # --- CORREÇÃO: CARREGAR IMAGEM IN-MEMORY (SEM DISCO) ---
+                            try:
+                                # Carrega os bytes JPEG para um stream na memória
+                                image_stream = BytesIO(payload)
+                                # Abre a imagem a partir desse stream de memória (Objeto PIL Image)
+                                image_obj = Image.open(image_stream) 
+                                
+                                if gui_update_callback:
+                                    # Passa o OBJETO Image PIL diretamente para a GUI
+                                    gui_update_callback(image_obj) 
+                                    
+                            except Exception as e:
+                                # Se o frame estiver corrompido, ignoramos.
+                                # print(f"[GUI] Frame {currFrameNbr} corrompido ou incompleto: {e}. Ignorar.")
+                                pass 
+                            # --------------------------------------------------------
                         
             except socket.timeout:
                 continue
             except Exception as e:
-                print(f"[Cliente] RTP Interrompido: {e}")
+                # print(f"[Cliente] RTP Interrompido: {e}")
                 break
-    def write_frame(self, data):
-        """Escreve o payload (imagem JPEG) num ficheiro temporário."""
-        cachename = CACHE_FILE_NAME + str(self.sessionId) + CACHE_FILE_EXT
-        with open(cachename, "wb") as file:
-            file.write(data)
-        return cachename
+    
+    # --- FUNÇÃO write_frame REMOVIDA PARA EVITAR ESCRITA EM DISCO ---
+    # O código antigo está no seu histórico, mas foi omitido aqui.
 
     def get_neighbors(self):
         return self.neighbors

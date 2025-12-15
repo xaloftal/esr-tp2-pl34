@@ -97,9 +97,11 @@ class ClienteGUI:
         self.client.stop_stream()
         self.master.destroy()
         
+        # --- CORREÇÃO: REMOVIDA A LÓGICA DE APAGAR O FICHEIRO CACHE-0.JPG ---
+        # Não é mais necessário, pois o ficheiro não é criado.
         file_path = CACHE_FILE_NAME + "0" + CACHE_FILE_EXT
         if os.path.exists(file_path):
-            os.remove(file_path)
+             pass 
 
     def playMovie(self):
         """Play button handler."""
@@ -112,13 +114,12 @@ class ClienteGUI:
         """Pause button handler."""
         self.is_paused = True
 
-    def updateMovie(self, imageFile):
+    def updateMovie(self, image_obj): # <<--- AGORA ESPERA OBJETO Image, NÃO NOME DE FICHEIRO
         """Update the image file as video frame in the GUI."""
         if not self.is_paused:
             try:
-                # Tenta abrir a imagem
-                im = Image.open(imageFile)
-                photo = ImageTk.PhotoImage(im)
+                # O image_obj JÁ É a imagem carregada na memória (PIL Image)
+                photo = ImageTk.PhotoImage(image_obj)
                 
                 self.label.configure(image = photo, height=288) 
                 self.label.image = photo

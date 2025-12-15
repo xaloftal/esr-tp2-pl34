@@ -526,8 +526,22 @@ class Node:
             if current_active_route:
                 current_score = current_active_route["score"]
                 new_score = best_route_obj["score"]
-                if new_score > (current_score * 0.90): 
-                    return # A melhoria não é suficiente para justificar a troca
+
+                # --- DEBUG BLOCK ---
+                print(f"\n--- [DEBUG OTIMIZACAO] Comparação para {video} ---")
+                print(f"Rota Atual [{current_active_route['next_hop']}]: Score = {current_score:.2f}")
+                print(f"Candidato  [{best_route_obj['next_hop']}]: Score = {new_score:.2f}")
+                
+                threshold = current_score * 0.90
+                print(f"Limiar de troca (90% do atual): {threshold:.2f}")
+
+                # A Lógica de Histerese
+                if new_score > threshold:
+                    print(f"DECISÃO: Manter atual. ({new_score:.2f} > {threshold:.2f}) -> Melhoria insuficiente.")
+                    return 
+                else:
+                    print(f"DECISÃO: TROCAR! ({new_score:.2f} <= {threshold:.2f}) -> Melhoria significativa.")
+                # -------------------
 
             print(route_log(f"[{self.node_id}] Otimização encontrada! Trocando {old_ip} -> {best_neigh_ip}"))
 
@@ -689,7 +703,7 @@ class Node:
             return
         self.join_cache.add(neigh_ip)
         self.leave_cache.discard(neigh_ip)
-
+        
         print(route_log(f"[{self.node_id}] O vizinho {neigh_ip} juntou-se à rede."))
 
         with self.lock:
@@ -959,23 +973,34 @@ class Node:
                     
     def find_best_active_neighbour(self, video, exclude_ip=None):
         """
-        Escolhe o vizinho ativo com a melhor métrica, IGNORANDO o 'exclude_ip'.
+        Escolhe o vizinho ativo com a melhor métrica.
+        EXCLUI AUTOMATICAMENTE:
+        1. O 'exclude_ip' passado explicitamente (opcional).
+        2. Qualquer nó que já seja meu cliente (downstream) para este vídeo.
         """
         if video not in self.routing_table:
             return None
+
+        # Lista de clientes que já estão a receber este vídeo de mim (MEUS FILHOS)
+        # Se eu pedir ao meu filho, crio um loop!
+        my_children = self.downstream_clients.get(video, [])
 
         active_routes = []
         for r in self.routing_table[video]:
             neigh_ip = r["next_hop"]
             
-            # Verifica se está ativo nos vizinhos
-            is_online = self.neighbors.get(neigh_ip, False)
+            # 1. Verifica se está ativo fisicamente (TCP/Neighbors)
+            # Confirma se o teu self.neighbors devolve True/False ou um objeto.
+            # Se for dicionário de estado: self.neighbors.get(neigh_ip, False) funciona se o valor for booleano.
+            is_online = self.neighbors.get(neigh_ip, False) 
             
+            # 2. Verifica se foi excluído explicitamente
+            not_excluded_arg = (neigh_ip != exclude_ip)
+
+            # 3. Verifica se é meu cliente (Proteção Anti-Loop)
+            not_my_child = (neigh_ip not in my_children)
             
-            # Verifica se NÃO é o IP que queremos excluir
-            not_excluded = (neigh_ip != exclude_ip)
-            
-            if is_online and not_excluded:
+            if is_online and not_excluded_arg and not_my_child:
                 active_routes.append(r)
 
         if not active_routes:
@@ -984,6 +1009,7 @@ class Node:
         # Escolhe o que tem menor score
         best = min(active_routes, key=lambda r: r["score"])
         return best["next_hop"]
+
 
     def open_rtp_port(self):
         """Cria o socket UDP e inicia a thread de escuta."""
@@ -1170,8 +1196,8 @@ class Node:
         client_ips = list(self.downstream_clients[video_name])
         
         # Print RTP forwarding info with stream-specific color
-        print(rtp_forward_log(video_name, 
-           f"[{self.node_id}] RTP FWD: '{video_name}' seq={current_seq} from {sender_ip} → {num_clients} client(s): {client_ips}"))
+        #print(rtp_forward_log(video_name, 
+           #f"[{self.node_id}] RTP FWD: '{video_name}' seq={current_seq} from {sender_ip} → {num_clients} client(s): {client_ips}"))
         
         for client_ip in self.downstream_clients[video_name]:
             self.rtp_socket.sendto(raw_data, (client_ip, self.rtp_port))

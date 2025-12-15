@@ -162,7 +162,9 @@ class Message:
 
 # TODO: add the other metrics to the flood message
     @classmethod
-    def create_flood_message(cls, srcip, origin_flood ,flood_id=None, hop_count=0, video=None,start_timestamp=None):
+    def create_flood_message(cls, srcip, origin_flood ,flood_id=None, hop_count=0, video=None, start_timestamp=None,
+                             # --- CAMPOS ADICIONADOS AQUI ---
+                             accumulated_latency=0, accumulated_jitter=0, accumulated_loss=0): 
         """Create a FLOOD message."""
         if start_timestamp is None:
             start_timestamp = time.time()
@@ -171,7 +173,11 @@ class Message:
             "hop_count": hop_count,
             "video": video,
             "origin_ip":origin_flood,
-            "start_timestamp": start_timestamp
+            "start_timestamp": start_timestamp,
+            # --- AGORA INCLUIDOS NO PAYLOAD ---
+            "accumulated_latency": accumulated_latency,
+            "accumulated_jitter": accumulated_jitter,
+            "accumulated_loss": accumulated_loss
         }
         return cls(
             msg_type=MsgType.FLOOD,
@@ -180,7 +186,6 @@ class Message:
             payload=payload,
             msg_id=flood_id
         )
-
 
     @classmethod
     def create_alive_message(cls, srcip, destip):

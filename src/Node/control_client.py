@@ -1,4 +1,3 @@
-# Ficheiro: src/Node/control_client.py
 import json
 import socket
 import threading
@@ -6,13 +5,19 @@ import sys
 import time
 import os
 from tkinter import Tk
+# --- NOVOS IMPORTS CRÍTICOS (Para evitar disco/cache) ---
+from io import BytesIO
+from PIL import Image
+# -------------------------------------------------------
+
 from aux_files.ClienteGUI import ClienteGUI
 from aux_files.RtpPacket import RtpPacket 
 from aux_files.aux_message import Message, MsgType
 from config import NODE_TCP_PORT, NODE_RTP_PORT, BOOTSTRAPPER_PORT, HEARTBEAT_INTERVAL, FAIL_TIMEOUT, MAX_FAILS
 
-CACHE_FILE_NAME = "cache-"
-CACHE_FILE_EXT = ".jpg"
+# Estes não são usados, mas são mantidos para compatibilidade com o ClienteGUI
+CACHE_FILE_NAME = "cache-" 
+CACHE_FILE_EXT = ".jpg" 
 
 class ControlClient():
     """
@@ -29,7 +34,6 @@ class ControlClient():
         self.rtspSeq = 0
         self.frameNbr = 0
         self.neighbors = {}
-        self.register_and_join()  # vizinhos ativos
         self.gui_callback = None
         
         # --- Configuração RTP (UDP) ---
@@ -66,6 +70,7 @@ class ControlClient():
             print(f"[Cliente] Erro ao abrir socket RTP: {e}")
 
     def listen_rtp(self, gui_update_callback=None):
+        """RECEBE RTP e envia a imagem EM MEMÓRIA para a GUI."""
         while True:
             try:
                 data, addr = self.rtp_socket.recvfrom(20480)
@@ -74,30 +79,28 @@ class ControlClient():
                     rtpPacket = RtpPacket()
                     rtpPacket.decode(data)
                     
-                    # Get frame payload without video name prefix
                     payload = rtpPacket.getFramePayload()
                     currFrameNbr = rtpPacket.seqNum()
                     
-                    
-                    if currFrameNbr > self.frameNbr:
+                    # --- CORREÇÃO AQUI ---
+                    # Aceitamos se for maior (sequência normal)
+                    # OU se a diferença for muito grande (indica que o vídeo reiniciou ou trocámos para fonte resetada)
+                    if currFrameNbr > self.frameNbr or (self.frameNbr - currFrameNbr > 100):
                         self.frameNbr = currFrameNbr
                         
-                        # Proteção: Só processa se tiver dados reais
                         if len(payload) > 0:
-                            image_file = self.write_frame(payload)
-                            
                             if gui_update_callback:
                                 try:
-                                    gui_update_callback(image_file)
+                                    gui_update_callback(payload)
                                 except Exception as e:
-                                    # Se a imagem for má, apenas ignoramos este frame e não matamos a thread
-                                    print(f"[GUI] Frame {currFrameNbr} corrompido ou incompleto. Ignorar.")
-                        
+                                    print(f"[GUI] Erro frame {currFrameNbr}: {e}")
+                    
             except socket.timeout:
                 continue
             except Exception as e:
-                print(f"[Cliente] RTP Interrompido: {e}")
+                # print(f"[Cliente] RTP Interrompido: {e}")
                 break
+
     def write_frame(self, data):
         """Escreve o payload (imagem JPEG) num ficheiro temporário."""
         cachename = CACHE_FILE_NAME + str(self.sessionId) + CACHE_FILE_EXT
@@ -179,12 +182,34 @@ class ControlClient():
             print(f"[Cliente] Recebido LEAVE de {sender_ip}")
             if sender_ip in self.neighbors:
                 self.neighbors[sender_ip] = False
+        elif msg_type == MsgType.PING_TEST:
+            self.handle_pingtest_message(msg)
+            
+
         elif msg_type == MsgType.PONG:
             print(f"[Cliente] Recebi PONG de {sender_ip}")
             if hasattr(self, "gui_callback") and self.gui_callback:
                 self.gui_callback("PONG RECEBIDO")
     
             if sender_ip in self.neighbors: self.neighbors[sender_ip] = False
+
+    def handle_pingtest_message(self, msg):
+        """
+        Handles PING_TEST at the client (endpoint).
+        It finalizes the path and displays the result.
+        """
+        payload = msg.get_payload()
+        video_name = payload.get("video")
+        path_so_far = payload.get("path", [])
+
+        # Add current node (End of Line) to the path
+        full_path = path_so_far + [self.node_id]
+        path_string = " -> ".join(full_path)
+
+        print(f"[Cliente]PING RECEBIDO com sucesso para '{video_name}'!")
+        print(f"[Cliente]Rota Completa: {path_string}")
+
+
 
     def heartbeat(self):
         while True:

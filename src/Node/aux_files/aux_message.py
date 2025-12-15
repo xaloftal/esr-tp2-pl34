@@ -19,6 +19,7 @@ class MsgType:
     PING = "PING"
     PONG = "PONG"
     TEARDOWN = "TEARDOWN"
+    PING_TEST = "PING_TEST"
     
     # Data messages (UDP)
     STREAM_DATA = "STREAM_DATA"
@@ -196,7 +197,7 @@ class Message:
             destip=destip,
             payload={}
         )
-
+    
 
     @classmethod
     def create_join_message(cls, srcip, node_id):
@@ -307,7 +308,23 @@ class Message:
             srcip=srcip,
             destip=destip
         )
-
+    @classmethod
+    def create_pingtest_message(cls, srcip, destip, video_name, current_path=None):
+        """
+        Cria uma mensagem de PING que acumula o caminho.
+        """
+        if current_path is None:
+            current_path = []
+            
+        return cls(
+            msg_type=MsgType.PING_TEST,
+            srcip=srcip,
+            destip=destip,
+            payload={
+                "video": video_name,
+                "path": current_path # Lista que vai crescer: ['S1', 'N2', 'N5', ...]
+            }
+        )
 
 
 # Backward compatibility functions

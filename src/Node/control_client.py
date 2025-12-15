@@ -79,15 +79,22 @@ class ControlClient():
                     rtpPacket = RtpPacket()
                     rtpPacket.decode(data)
                     
+<<<<<<< HEAD
                     # Get frame payload without video name prefix (Bytes JPEG)
                     payload = rtpPacket.getFramePayload() 
+=======
+                    payload = rtpPacket.getFramePayload()
+>>>>>>> 18549a5c69c3fd51e161d7e06a8b9ffb8435a590
                     currFrameNbr = rtpPacket.seqNum()
                     
-                    
-                    if currFrameNbr > self.frameNbr:
+                    # --- CORREÇÃO AQUI ---
+                    # Aceitamos se for maior (sequência normal)
+                    # OU se a diferença for muito grande (indica que o vídeo reiniciou ou trocámos para fonte resetada)
+                    if currFrameNbr > self.frameNbr or (self.frameNbr - currFrameNbr > 100):
                         self.frameNbr = currFrameNbr
                         
                         if len(payload) > 0:
+<<<<<<< HEAD
                             # --- CORREÇÃO: CARREGAR IMAGEM IN-MEMORY (SEM DISCO) ---
                             try:
                                 # Carrega os bytes JPEG para um stream na memória
@@ -105,14 +112,32 @@ class ControlClient():
                                 pass 
                             # --------------------------------------------------------
                         
+=======
+                            if gui_update_callback:
+                                try:
+                                    gui_update_callback(payload)
+                                except Exception as e:
+                                    print(f"[GUI] Erro frame {currFrameNbr}: {e}")
+                    
+>>>>>>> 18549a5c69c3fd51e161d7e06a8b9ffb8435a590
             except socket.timeout:
                 continue
             except Exception as e:
                 # print(f"[Cliente] RTP Interrompido: {e}")
                 break
+<<<<<<< HEAD
     
     # --- FUNÇÃO write_frame REMOVIDA PARA EVITAR ESCRITA EM DISCO ---
     # O código antigo está no seu histórico, mas foi omitido aqui.
+=======
+
+    def write_frame(self, data):
+        """Escreve o payload (imagem JPEG) num ficheiro temporário."""
+        cachename = CACHE_FILE_NAME + str(self.sessionId) + CACHE_FILE_EXT
+        with open(cachename, "wb") as file:
+            file.write(data)
+        return cachename
+>>>>>>> 18549a5c69c3fd51e161d7e06a8b9ffb8435a590
 
     def get_neighbors(self):
         return self.neighbors
@@ -188,12 +213,34 @@ class ControlClient():
             print(f"[Cliente] Recebido LEAVE de {sender_ip}")
             if sender_ip in self.neighbors:
                 self.neighbors[sender_ip] = False
+        elif msg_type == MsgType.PING_TEST:
+            self.handle_pingtest_message(msg)
+            
+
         elif msg_type == MsgType.PONG:
             print(f"[Cliente] Recebi PONG de {sender_ip}")
             if hasattr(self, "gui_callback") and self.gui_callback:
                 self.gui_callback("PONG RECEBIDO")
     
             if sender_ip in self.neighbors: self.neighbors[sender_ip] = False
+
+    def handle_pingtest_message(self, msg):
+        """
+        Handles PING_TEST at the client (endpoint).
+        It finalizes the path and displays the result.
+        """
+        payload = msg.get_payload()
+        video_name = payload.get("video")
+        path_so_far = payload.get("path", [])
+
+        # Add current node (End of Line) to the path
+        full_path = path_so_far + [self.node_id]
+        path_string = " -> ".join(full_path)
+
+        print(f"[Cliente]PING RECEBIDO com sucesso para '{video_name}'!")
+        print(f"[Cliente]Rota Completa: {path_string}")
+
+
 
     def heartbeat(self):
         while True:

@@ -37,9 +37,7 @@ class ControlServer:
         elif isinstance(self.video, str):
             print(f"[Servidor] Configuração Single-Vídeo: {self.video}")
             videos_to_start = {self.video: self.video}
-            
-        print("[Servidor] A iniciar canais de TV...")
-        
+                    
         for v_name, v_path in videos_to_start.items():
             # Create the broadcaster thread
             rtp = RtpServer(video_file=v_path, video_name=v_name)

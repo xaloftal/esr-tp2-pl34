@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="794" height="480" viewBox="20 40 1090 520" preserveAspectRatio="xMidYMid meet">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1f6feb"/>
+    </marker>
+    <style>
+      .title { font: 700 18px sans-serif; fill: #1f6feb; }
+      .label { font: 14px sans-serif; fill: #111; }
+      .small { font: 12px sans-serif; fill: #111; }
+      .box { fill: #f2f8ff; stroke: #1f6feb; stroke-width: 1.6; }
+      .boxOld { fill: #fff5f5; stroke: #eb5757; stroke-width: 1.8; }
+      .boxNew { fill: #f0fff4; stroke: #27ae60; stroke-width: 1.8; }
+      .life { stroke: #94a3b8; stroke-width: 1.2; stroke-dasharray: 6 6; }
+      .msg { stroke: #1f6feb; stroke-width: 1.6; marker-end: url(#arrow); }
+      .msgOld { stroke: #eb5757; }
+      .msgNew { stroke: #27ae60; }
+      .note { fill: #ffffff; stroke: #94a3b8; stroke-width: 1.2; }
+    </style>
+  </defs>
+
+  <!-- Participants -->
+  <rect x="40"  y="60" width="220" height="44" class="box"/>
+  <text x="60"  y="88" class="label">Nó relay (com clientes)</text>
+
+  <rect x="330" y="60" width="220" height="44" class="boxOld"/>
+  <text x="350" y="88" class="label">Upstream antigo</text>
+
+  <rect x="620" y="60" width="220" height="44" class="boxNew"/>
+  <text x="640" y="88" class="label">Upstream novo</text>
+
+  <rect x="910" y="60" width="170" height="44" class="box"/>
+  <text x="930" y="88" class="label">Servidor de Stream</text>
+
+  <!-- Lifelines -->
+  <line x1="150" y1="104" x2="150" y2="660" class="life"/>
+  <line x1="440" y1="104" x2="440" y2="660" class="life"/>
+  <line x1="730" y1="104" x2="730" y2="660" class="life"/>
+  <line x1="995" y1="104" x2="995" y2="660" class="life"/>
+
+  <!-- Detection -->
+  <rect x="60" y="130" width="340" height="70" class="note"/>
+  <text x="80" y="156" class="label">Detetar silêncio RTP</text>
+  <text x="80" y="178" class="small">check_rtp_silence(): now - last_rtp_time[video] &gt; rtp_timeout</text>
+
+  <line x1="150" y1="240" x2="440" y2="240" class="msg msgOld"/>
+  <text x="205" y="230" class="label">(local) desativar rota</text>
+  <text x="205" y="255" class="small">routing_table[video].is_active = False (next_hop antigo)</text>
+
+  <!-- Switch -->
+  <line x1="150" y1="320" x2="730" y2="320" class="msg msgNew"/>
+  <text x="330" y="310" class="label">STREAM_START (TCP)</text>
+  <text x="330" y="335" class="small">type=STREAM_START, payload.video; pedido via melhor alternativa</text>
+
+  <rect x="600" y="345" width="470" height="86" class="note"/>
+  <text x="620" y="370" class="label">Intenção make-before-break</text>
+  <text x="620" y="392" class="small">O relay pré-ativa a nova rota antes de cortar a anterior, minimizando a interrupção.</text>
+  <text x="620" y="412" class="small">(O projeto também usa teardown tardio nos caminhos de otimização de rotas.)</text>
+
+  <!-- Cleanup -->
+  <line x1="150" y1="480" x2="440" y2="480" class="msg msgOld"/>
+  <text x="210" y="470" class="label">TEARDOWN (TCP)</text>
+  <text x="210" y="495" class="small">type=TEARDOWN, payload.video (enviado ao upstream antigo/falhado se necessário)</text>
+
+</svg>

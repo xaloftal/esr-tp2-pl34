@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="794" height="498" viewBox="0 0 1100 690" preserveAspectRatio="xMidYMid meet">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1f6feb"/>
+    </marker>
+    <style>
+      .title { font: 700 18px sans-serif; fill: #1f6feb; }
+      .label { font: 14px sans-serif; fill: #111; }
+      .small { font: 12px sans-serif; fill: #111; }
+      .box { fill: #f2f8ff; stroke: #1f6feb; stroke-width: 1.6; }
+      .life { stroke: #94a3b8; stroke-width: 1.2; stroke-dasharray: 6 6; }
+      .msg { stroke: #1f6feb; stroke-width: 1.6; marker-end: url(#arrow); }
+      .udp { stroke: #60a5fa; stroke-width: 1.6; stroke-dasharray: 5 5; marker-end: url(#arrow); }
+      .note { fill: #ffffff; stroke: #94a3b8; stroke-width: 1.2; }
+    </style>
+  </defs>
+
+
+  <!-- Participants -->
+  <rect x="40"  y="60" width="220" height="44" class="box"/>
+  <text x="60"  y="88" class="label">Cliente / Nó folha</text>
+
+  <rect x="330" y="60" width="220" height="44" class="box"/>
+  <text x="350" y="88" class="label">Nó relay</text>
+
+  <rect x="620" y="60" width="220" height="44" class="box"/>
+  <text x="640" y="88" class="label">Servidor de Stream</text>
+
+  <rect x="910" y="60" width="170" height="44" class="box"/>
+  <text x="930" y="88" class="label">Subsistema RTP</text>
+
+  <!-- Lifelines -->
+  <line x1="150" y1="104" x2="150" y2="660" class="life"/>
+  <line x1="440" y1="104" x2="440" y2="660" class="life"/>
+  <line x1="730" y1="104" x2="730" y2="660" class="life"/>
+  <line x1="995" y1="104" x2="995" y2="660" class="life"/>
+
+  <!-- Control: setup -->
+  <line x1="150" y1="150" x2="440" y2="150" class="msg"/>
+  <text x="205" y="140" class="label">STREAM_START (TCP)</text>
+  <text x="205" y="165" class="small">type=STREAM_START, payload.video</text>
+
+  <rect x="300" y="178" width="420" height="82" class="note"/>
+  <text x="320" y="204" class="label">Ações do Nó relay</text>
+  <text x="320" y="226" class="small">- downstream_clients[video] += cliente</text>
+  <text x="320" y="246" class="small">- seleciona o melhor upstream via score na routing_table</text>
+
+  <line x1="440" y1="300" x2="730" y2="300" class="msg"/>
+  <text x="495" y="290" class="label">STREAM_START (TCP) reenviado</text>
+  <text x="495" y="315" class="small">src=Relay, dest=best_neigh (em direção ao servidor)</text>
+
+  <rect x="605" y="328" width="430" height="82" class="note"/>
+  <text x="625" y="354" class="label">Ações do servidor</text>
+  <text x="625" y="376" class="small">- downstream_clients[video] += relay</text>
+  <text x="625" y="396" class="small">- adiciona relay como subscritor: start_stream_to_client(relay, video)</text>
+
+  <!-- Data: RTP -->
+  <line x1="995" y1="460" x2="730" y2="460" class="udp"/>
+  <text x="770" y="450" class="label">Pacotes RTP (UDP)</text>
+  <text x="770" y="475" class="small">Broadcast do RtpServer → subscritores</text>
+
+  <line x1="730" y1="520" x2="440" y2="520" class="udp"/>
+  <text x="520" y="510" class="label">Encaminhamento RTP (UDP)</text>
+  <text x="520" y="535" class="small">Relay encaminha para downstream_clients[video]</text>
+
+  <line x1="440" y1="580" x2="150" y2="580" class="udp"/>
+  <text x="220" y="570" class="label">RTP recebido (UDP)</text>
+
+  <rect x="60" y="610" width="980" height="40" class="note"/>
+  <text x="80" y="636" class="small">Setas tracejadas = plano de dados UDP; setas contínuas = plano de controlo TCP.</text>
+</svg>

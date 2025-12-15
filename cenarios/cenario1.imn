@@ -10,8 +10,8 @@ node n1 {
 	!
     }
     canvas c1
-    iconcoords {73.0 146.0}
-    labelcoords {73.0 178.0}
+    iconcoords {79.0 140.0}
+    labelcoords {79.0 172.0}
     interface-peer {eth0 n3}
 }
 
@@ -27,8 +27,8 @@ node n2 {
 	!
     }
     canvas c1
-    iconcoords {74.0 287.0}
-    labelcoords {74.0 319.0}
+    iconcoords {86.0 279.0}
+    labelcoords {86.0 311.0}
     interface-peer {eth0 n3}
 }
 
@@ -52,8 +52,8 @@ node n3 {
 	!
     }
     canvas c1
-    iconcoords {218.0 219.0}
-    labelcoords {218.0 251.0}
+    iconcoords {310.0 226.0}
+    labelcoords {310.0 258.0}
     interface-peer {eth0 n1}
     interface-peer {eth1 n2}
     interface-peer {eth2 n4}
@@ -71,8 +71,8 @@ node n4 {
 	!
     }
     canvas c1
-    iconcoords {448.0 216.0}
-    labelcoords {448.0 248.0}
+    iconcoords {569.0 218.0}
+    labelcoords {569.0 250.0}
     interface-peer {eth0 n3}
 }
 
@@ -91,13 +91,84 @@ link l3 {
     bandwidth 0
 }
 
+annotation a1 {
+    iconcoords {485.0 168.0 644.0 270.0}
+    type oval
+    label {S1 - 10.0.2.10}
+    labelcolor black
+    fontfamily {Arial}
+    fontsize {12}
+    color #ecbcbc
+    width 0
+    border black
+    effects {italic underline}
+    canvas c1
+}
+
+annotation a2 {
+    iconcoords {236.0 175.0 385.0 271.0}
+    type oval
+    label {N1 - 10.0.0.1}
+    labelcolor black
+    fontfamily {Arial}
+    fontsize {12}
+    color #cfcfff
+    width 0
+    border black
+    effects {italic underline}
+    canvas c1
+}
+
+annotation a3 {
+    iconcoords {13.0 83.0 154.0 190.0}
+    type oval
+    label {C1 - 10.0.0.20}
+    labelcolor black
+    fontfamily {Arial}
+    fontsize {12}
+    color #c3ecbc
+    width 0
+    border black
+    effects {italic underline}
+    canvas c1
+}
+
+annotation a4 {
+    iconcoords {17.0 224.0 171.0 337.0}
+    type oval
+    label {C2 - 10.0.1.20}
+    labelcolor black
+    fontfamily {Arial}
+    fontsize {12}
+    color #c3ecbc
+    width 0
+    border black
+    effects {italic underline}
+    canvas c1
+}
+
+annotation a5 {
+    iconcoords {309 93 524 142}
+    type rectangle
+    label {Bootstrapper - 10.0.2.1 (n1)}
+    labelcolor black
+    fontfamily {Arial}
+    fontsize 12
+    color #ececbc
+    width 0
+    border black
+    rad 6
+    effects {italic underline}
+    canvas c1
+}
+
 canvas c1 {
     name {Canvas1}
 }
 
 option global {
     interface_names no
-    ip_addresses yes
+    ip_addresses no
     ipv6_addresses no
     node_labels yes
     link_labels yes

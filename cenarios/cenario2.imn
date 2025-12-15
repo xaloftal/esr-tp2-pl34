@@ -18,8 +18,8 @@ node n1 {
 	!
     }
     canvas c1
-    iconcoords {327.0 158.0}
-    labelcoords {327.0 190.0}
+    iconcoords {324.0 174.0}
+    labelcoords {324.0 206.0}
     interface-peer {eth0 n4}
     interface-peer {eth1 n2}
     interface-peer {eth2 n3}
@@ -45,8 +45,8 @@ node n2 {
 	!
     }
     canvas c1
-    iconcoords {326.0 298.0}
-    labelcoords {324.0 336.0}
+    iconcoords {322.0 318.0}
+    labelcoords {320.0 356.0}
     interface-peer {eth0 n5}
     interface-peer {eth1 n1}
     interface-peer {eth2 n3}
@@ -91,8 +91,8 @@ node n4 {
 	!
     }
     canvas c1
-    iconcoords {81.0 159.0}
-    labelcoords {81.0 191.0}
+    iconcoords {90.0 178.0}
+    labelcoords {90.0 210.0}
     interface-peer {eth0 n1}
 }
 
@@ -108,8 +108,8 @@ node n5 {
 	!
     }
     canvas c1
-    iconcoords {78.0 293.0}
-    labelcoords {78.0 325.0}
+    iconcoords {99.0 335.0}
+    labelcoords {99.0 367.0}
     interface-peer {eth0 n2}
 }
 
@@ -125,8 +125,8 @@ node n6 {
 	!
     }
     canvas c1
-    iconcoords {796.0 216.0}
-    labelcoords {796.0 248.0}
+    iconcoords {795.0 225.0}
+    labelcoords {795.0 257.0}
     interface-peer {eth0 n3}
 }
 
@@ -160,13 +160,112 @@ link l6 {
     bandwidth 0
 }
 
+annotation a1 {
+    iconcoords {253.0 120.0 391.0 213.0}
+    type oval
+    label {N1 - 10.0.3.1}
+    labelcolor black
+    fontfamily {Arial}
+    fontsize {12}
+    color #cfcfff
+    width 0
+    border black
+    effects {italic underline}
+    canvas c1
+}
+
+annotation a2 {
+    iconcoords {259.0 262.0 388.0 348.0}
+    type oval
+    label {N2 - 10.0.4.2}
+    labelcolor black
+    fontfamily {Arial}
+    fontsize {12}
+    color #cfcfff
+    width 0
+    border black
+    effects {italic underline}
+    canvas c1
+}
+
+annotation a3 {
+    iconcoords {470.0 167.0 599.0 272.0}
+    type oval
+    label {N3 - 10.0.5.1}
+    labelcolor black
+    fontfamily {Arial}
+    fontsize {12}
+    color #CFCFFF
+    width 0
+    border black
+    effects {italic underline}
+    canvas c1
+}
+
+annotation a4 {
+    iconcoords {715.0 172.0 868.0 266.0}
+    type oval
+    label {S1 - 10.0.5.20}
+    labelcolor black
+    fontfamily {Arial}
+    fontsize {12}
+    color #ecbcbc
+    width 0
+    border black
+    effects {italic underline}
+    canvas c1
+}
+
+annotation a5 {
+    iconcoords {31.0 129.0 161.0 222.0}
+    type oval
+    label {C1 - 10.0.0.20}
+    labelcolor black
+    fontfamily {Arial}
+    fontsize {12}
+    color #c3ecbc
+    width 0
+    border black
+    effects {italic underline}
+    canvas c1
+}
+
+annotation a6 {
+    iconcoords {28.0 282.0 168.0 383.0}
+    type oval
+    label {C2 - 10.0.1.20}
+    labelcolor black
+    fontfamily {Arial}
+    fontsize {12}
+    color #c3ecbc
+    width 0
+    border black
+    effects {italic underline}
+    canvas c1
+}
+
+annotation a7 {
+    iconcoords {518 307 724 366}
+    type rectangle
+    label {Bootstrapper - 10.0.1.1 (n2)}
+    labelcolor black
+    fontfamily {Arial}
+    fontsize {12}
+    color #ececbc
+    width 0
+    border black
+    rad 6
+    effects {italic underline}
+    canvas c1
+}
+
 canvas c1 {
     name {Canvas1}
 }
 
 option global {
     interface_names no
-    ip_addresses yes
+    ip_addresses no
     ipv6_addresses no
     node_labels yes
     link_labels yes

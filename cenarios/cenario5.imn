@@ -19,8 +19,8 @@ node n2 {
 	!
     }
     canvas c1
-    iconcoords {157.0 112.0}
-    labelcoords {157.0 136.0}
+    iconcoords {177.0 118.0}
+    labelcoords {177.0 142.0}
     interface-peer {e0 n8}
     interface-peer {e1 n9}
     interface-peer {e2 n16}
@@ -259,6 +259,10 @@ node n16 {
     network-config {
 	hostname O5
 	!
+	interface eth4
+	 ip address 10.0.21.1/24
+	 ipv6 address 2001:21::1/64
+	!
 	interface eth3
 	 ip address 10.0.9.2/24
 	 ipv6 address 2001:9::2/64
@@ -277,12 +281,13 @@ node n16 {
 	!
     }
     canvas c1
-    iconcoords {233.0 145.0}
-    labelcoords {204.0 168.0}
+    iconcoords {254.0 178.0}
+    labelcoords {225.0 201.0}
     interface-peer {eth0 n2}
     interface-peer {eth1 n15}
     interface-peer {eth2 n17}
     interface-peer {eth3 n20}
+    interface-peer {eth4 n26}
 }
 
 node n17 {
@@ -309,8 +314,8 @@ node n17 {
 	!
     }
     canvas c1
-    iconcoords {359.0 268.0}
-    labelcoords {401.0 277.0}
+    iconcoords {366.0 277.0}
+    labelcoords {408.0 286.0}
     interface-peer {eth0 n15}
     interface-peer {eth1 n16}
     interface-peer {eth2 n19}
@@ -437,8 +442,8 @@ node n21 {
 	!
     }
     canvas c1
-    iconcoords {596.0 267.0}
-    labelcoords {555.0 277.0}
+    iconcoords {596.0 263.0}
+    labelcoords {555.0 273.0}
     interface-peer {eth0 n24}
     interface-peer {eth1 n20}
     interface-peer {eth2 n22}
@@ -541,6 +546,23 @@ node n25 {
     iconcoords {929.0 241.0}
     labelcoords {928.0 278.0}
     interface-peer {eth0 n4}
+}
+
+node n26 {
+    type router
+    model host
+    network-config {
+	hostname n26
+	!
+	interface eth0
+	 ip address 10.0.21.10/24
+	 ipv6 address 2001:21::10/64
+	!
+    }
+    canvas c1
+    iconcoords {343.0 62.0}
+    labelcoords {343.0 94.0}
+    interface-peer {eth0 n16}
 }
 
 link l1 {
@@ -698,6 +720,11 @@ link l31 {
     bandwidth 0
 }
 
+link l32 {
+    nodes {n16 n26}
+    bandwidth 0
+}
+
 annotation a1 {
     iconcoords {852 183 999 287}
     type oval
@@ -741,7 +768,7 @@ annotation a3 {
 }
 
 annotation a4 {
-    iconcoords {163.0 91.0 314.0 187.0}
+    iconcoords {175 118 328 216}
     type oval
     label {O5 - 10.0.5.2}
     labelcolor black
@@ -853,7 +880,21 @@ annotation a11 {
 }
 
 annotation a12 {
-    iconcoords {671 458 900 513}
+    iconcoords {267.0 7.0 410.0 97.0}
+    type oval
+    label {S2 - 10.0.21.10}
+    labelcolor black
+    fontfamily {Arial}
+    fontsize {12}
+    color #ecbcbc
+    width 0
+    border black
+    effects {italic underline}
+    canvas c1
+}
+
+annotation a13 {
+    iconcoords {677.0 473.0 895.0 524.0}
     type rectangle
     label {Bootstrapper - 10.0.4.2 (a2)}
     labelcolor black

@@ -37,9 +37,7 @@ class ControlServer:
         elif isinstance(self.video, str):
             print(f"[Servidor] Configuração Single-Vídeo: {self.video}")
             videos_to_start = {self.video: self.video}
-            
-        print("[Servidor] A iniciar canais de TV...")
-        
+                    
         for v_name, v_path in videos_to_start.items():
             # Create the broadcaster thread
             rtp = RtpServer(video_file=v_path, video_name=v_name)
@@ -84,7 +82,6 @@ class ControlServer:
         """
         
         if video_name in self.channels:
-            print(f"[Servidor] Cliente {client_ip} subscreveu ao canal {video_name}")
             # Add client to the broadcast list
             self.channels[video_name].add_subscriber(client_ip, self.UDPport)
         else:

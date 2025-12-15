@@ -21,11 +21,7 @@ class MsgType:
     TEARDOWN = "TEARDOWN"
     PING_TEST = "PING_TEST"
     
-    # Data messages (UDP)
-    STREAM_DATA = "STREAM_DATA"
-    
-    # Acknowledgments
-    ALIVE_ACK = "ALIVE_ACK"
+
 
 
 class Message:
@@ -159,9 +155,7 @@ class Message:
         return f"Message({self.to_dict()})"
 
 
-# Factory methods for creating specific message types
 
-# TODO: add the other metrics to the flood message
     @classmethod
     def create_flood_message(cls, srcip, origin_flood ,flood_id=None, hop_count=0, video=None, start_timestamp=None,
                              # --- CAMPOS ADICIONADOS AQUI ---

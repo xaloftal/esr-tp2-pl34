@@ -384,7 +384,8 @@ class Node:
     # ------------------------------------------------------------------
     def handle_flood_message(self, msg):
         """
-        Processa mensagens de FLOOD de forma dinâmica e sem valores hardcoded.
+        Processa mensagens de FLOOD de forma dinâmica.
+
         """
         src_ip = msg.get_src()
         msg_id = msg.id
@@ -400,42 +401,38 @@ class Node:
         accum_jitter_prev = payload.get("accumulated_jitter", 0)   
         accum_loss_prev = payload.get("accumulated_loss", 0)     
 
-        # Se sou o servidor deste vídeo, ignoro loops
         if self.is_server:
             my_video = self.server.video
             if (isinstance(my_video, str) and my_video == video):
                 return 
 
-        # --- 2. CALCULAR MÉTRICAS REAIS DO HOP (Sem Hardcoding) ---
-        # Latência Total desde a origem até agora
+        # --- 2. CALCULAR MÉTRICAS REAIS DO HOP ---
         current_latency_total = (time.time() - start_ts) * 1000  # ms
         
-        # Latência deste salto específico (Total - O que já vinha de trás)
         current_latency_hop = current_latency_total - accum_latency_prev 
-        if current_latency_hop < 0: current_latency_hop = 0.0 # Proteção contra clock skew
+        if current_latency_hop < 0: current_latency_hop = 0.0
 
-        # Jitter (Variação da latência)
         if video not in self.last_flood_timestamp:
             self.last_flood_timestamp[video] = {}
 
         old_ts = self.last_flood_timestamp[video].get(src_ip, None)
         jitter_hop = abs(current_latency_total - old_ts) if old_ts is not None else 0
         self.last_flood_timestamp[video][src_ip] = current_latency_total
-
+        
         # Perdas (Packet Loss Estimado)
         stats = self.packet_loss_stats.get(video, {}).get(src_ip, {"expected": 1, "received": 1})
         loss_rate_hop = 1 - (stats["received"] / max(stats["expected"], 1))
 
-        # --- 3. NOVOS ACUMULADOS ---
         new_accum_latency = accum_latency_prev + current_latency_hop
         new_accum_jitter = accum_jitter_prev + jitter_hop
-        new_accum_loss = accum_loss_prev + loss_rate_hop
+        
+        new_accum_loss = accum_loss_prev + loss_rate_hop 
 
-        # --- 4. CÁLCULO DO SCORE (Pesos ajustáveis) ---
-        α = 50      # Peso dos Hops
-        β = 1       # Peso da Latência
-        γ = 0.5     # Peso do Jitter
-        δ = 300     # Peso das Perdas
+        # --- 4. CÁLCULO DO SCORE
+        α = 50      # Hops
+        β = 1       # Latência
+        γ = 0.5     # Jitter
+        δ = 300     # Perdas 
 
         score = (hop_count + 1)*α + new_accum_latency*β + new_accum_jitter*γ + new_accum_loss*δ
 
@@ -456,33 +453,28 @@ class Node:
                 if video not in self.routing_table:
                     self.routing_table[video] = []
 
-                # Verifica se já existe rota por este vizinho e atualiza
                 existing_route = next((r for r in self.routing_table[video] if r["next_hop"] == src_ip), None)
 
                 if existing_route:
-                    # Mantém o estado ativo se já estava
                     new_route["is_active"] = existing_route["is_active"]
                     existing_route.update(new_route)
-                    print(f"[{self.node_id}] Rota {video} via {src_ip} atualizada. Score: {score:.1f}")
+                    # print(...) opcional
                 else:
                     self.routing_table[video].append(new_route)
-                    print(flood_log(f"[{self.node_id}] Nova rota descoberta para {video} via {src_ip}. Score: {score:.1f}"))
+                    # print(...) opcional
 
-        # --- 6. LÓGICA DE OTIMIZAÇÃO (SWITCHOVER AUTOMÁTICO) ---
-        # Só tentamos otimizar se formos consumidores ativos deste vídeo
+        # --- 6. OTIMIZAÇÃO ---
         has_clients = (video in self.downstream_clients and len(self.downstream_clients[video]) > 0)
-        
         if video in self.routing_table and has_clients:
             self._attempt_route_optimization(video)
 
-        # --- 7. RE-BROADCAST (FLOOD) ---
+        # --- 7. RE-BROADCAST ---
         key = (origin_ip, msg_id)
         with self.lock:
             if key in self.flood_cache:
                 return
             self.flood_cache.add(key)
 
-        # Cria nova mensagem com os acumulados atualizados
         new_msg = Message.create_flood_message(
             srcip=self.node_ip,
             origin_flood=origin_ip,
@@ -495,11 +487,9 @@ class Node:
             accumulated_loss=new_accum_loss
         )
 
-        # Reencaminha para todos exceto quem enviou
         for neigh, is_active in self.neighbors.items():
             if neigh != src_ip and is_active:
-                self.send_tcp_message(neigh, new_msg)
-
+                self.send_tcp_message(neigh, new_msg)              
     def _attempt_route_optimization(self, video):
         """
         Função auxiliar para verificar se existe uma rota melhor e fazer a troca (Handover).

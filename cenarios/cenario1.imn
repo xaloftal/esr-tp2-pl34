@@ -97,7 +97,7 @@ annotation a1 {
     label {S1 - 10.0.2.10}
     labelcolor black
     fontfamily {Arial}
-    fontsize 12
+    fontsize {12}
     color #ecbcbc
     width 0
     border black
@@ -111,7 +111,7 @@ annotation a2 {
     label {N1 - 10.0.0.1}
     labelcolor black
     fontfamily {Arial}
-    fontsize 12
+    fontsize {12}
     color #cfcfff
     width 0
     border black
@@ -125,7 +125,7 @@ annotation a3 {
     label {C1 - 10.0.0.20}
     labelcolor black
     fontfamily {Arial}
-    fontsize 12
+    fontsize {12}
     color #c3ecbc
     width 0
     border black
@@ -139,10 +139,25 @@ annotation a4 {
     label {C2 - 10.0.1.20}
     labelcolor black
     fontfamily {Arial}
-    fontsize 12
+    fontsize {12}
     color #c3ecbc
     width 0
     border black
+    effects {italic underline}
+    canvas c1
+}
+
+annotation a5 {
+    iconcoords {309 93 524 142}
+    type rectangle
+    label {Bootstrapper - 10.0.2.1 (n1)}
+    labelcolor black
+    fontfamily {Arial}
+    fontsize 12
+    color #ececbc
+    width 0
+    border black
+    rad 6
     effects {italic underline}
     canvas c1
 }

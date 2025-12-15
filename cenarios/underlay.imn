@@ -309,8 +309,8 @@ node n17 {
 	!
     }
     canvas c1
-    iconcoords {366.0 277.0}
-    labelcoords {408.0 286.0}
+    iconcoords {359.0 268.0}
+    labelcoords {401.0 277.0}
     interface-peer {eth0 n15}
     interface-peer {eth1 n16}
     interface-peer {eth2 n19}
@@ -437,8 +437,8 @@ node n21 {
 	!
     }
     canvas c1
-    iconcoords {596.0 263.0}
-    labelcoords {555.0 273.0}
+    iconcoords {596.0 267.0}
+    labelcoords {555.0 277.0}
     interface-peer {eth0 n24}
     interface-peer {eth1 n20}
     interface-peer {eth2 n22}
@@ -848,6 +848,21 @@ annotation a11 {
     color #c3ecbc
     width 0
     border black
+    effects {italic underline}
+    canvas c1
+}
+
+annotation a12 {
+    iconcoords {671 458 900 513}
+    type rectangle
+    label {Bootstrapper - 10.0.4.2 (a2)}
+    labelcolor black
+    fontfamily {Arial}
+    fontsize 12
+    color #ececbc
+    width 0
+    border black
+    rad 6
     effects {italic underline}
     canvas c1
 }

@@ -1,25 +1,27 @@
-# Ficheiro: src/Node/config.py
+# File: src/Node/config.py
 import sys
 
-# --- Configs do Bootstrapper ---
-# Lê o IP do bootstrapper da linha de comando
-# (o 4º argumento, ex: python3 node.py n1 10.0.0.20 10.0.20.20)
+# --- BOOTSTRAPPER CONFIGURATION ---
+# Reads the bootstrapper IP from the command line (4th argument).
+# Usage: python3 node.py NODE_ID NODE_IP BOOTSTRAPPER_IP [--server]
 try:
     BOOTSTRAPPER_IP = sys.argv[3]
 except IndexError:
-    print("Erro: IP do Bootstrapper não fornecido.")
-    print("Uso: python3 node.py NODE_ID NODE_IP BOOTSTRAPPER_IP [--server]")
+    print("Error: Bootstrapper IP not provided.")
+    print("Usage: python3 node.py NODE_ID NODE_IP BOOTSTRAPPER_IP [--server]")
     sys.exit(1)
 
-BOOTSTRAPPER_PORT = 5000 # Porta do bootstrapper
+BOOTSTRAPPER_PORT = 5000 # Bootstrapper listening port
 
-# --- Configs dos Nós da Overlay ---
-# Porta TCP onde CADA nó vai escutar por msgs de controlo (FLOOD, etc.)
+# --- OVERLAY NODE CONFIGURATION ---
+# TCP port where EACH node listens for control messages (FLOOD, TEARDOWN, etc.)
 NODE_TCP_PORT = 6000
 
+# UDP port used for receiving RTP video streams
 NODE_RTP_PORT = 7000 
 
 
-HEARTBEAT_INTERVAL = 2      # de quanto em quanto tempo enviamos ALIVE
-FAIL_TIMEOUT = 25           # se 10 segundos sem ESTOU_AQUI → suspeito
-MAX_FAILS = 3     
+# --- HEARTBEAT / FAILURE DETECTION CONFIGURATION ---
+HEARTBEAT_INTERVAL = 2      # Frequency (in seconds) for sending ALIVE messages
+FAIL_TIMEOUT = 25           # Time (in seconds) to wait before considering a node suspect (Silence RTP/ALIVE)
+MAX_FAILS = 3               # Maximum number of consecutive timeouts before marking a neighbor/route as inactive (Failure Count)

@@ -26,29 +26,29 @@ class MsgType:
 
 class Message:
     """
-    Classe mensagem para comunicação entre nós.
+    Message class for communication between nodes.
     
-    Estrutura da mensagem:
+    Message structure:
     {
-        "id": id unico,
-        "type": tipo da mensagem (de MsgType),
-        "srcip": endereço IP de origem,
-        "destip": endereço IP de destino (ou "broadcast"),
-        "timestamp": quando a mensagem foi criada,
-        "payload": dados específicos da mensagem
+        "id": unique ID,
+        "type": message type (from MsgType),
+        "srcip": source IP address,
+        "destip": destination IP address (or "broadcast"),
+        "timestamp": when the message was created,
+        "payload": message-specific data
     }
     """
     
     def __init__(self, msg_type, srcip, destip="broadcast", payload=None, msg_id=None):
         """
-        Cria uma nova mensagem.
+        Creates a new message.
         
         Args:
-            msg_type: Tipo da mensagem (usar constantes de MsgType)
-            srcip: Endereço IP de origem
-            destip: Endereço IP de destino (padrão: "broadcast")
-            payload: Dicionário com dados específicos da mensagem
-            msg_id: ID opcional da mensagem (gerado automaticamente se não fornecido)
+            msg_type: Message type (use MsgType constants)
+            srcip: Source IP address
+            destip: Destination IP address (default: "broadcast")
+            payload: Dictionary with message-specific data
+            msg_id: Optional message ID (automatically generated if None)
         """
         self.id = msg_id if msg_id else str(uuid.uuid4())
         self.type = msg_type
@@ -58,7 +58,7 @@ class Message:
         self.payload = payload if payload else {}
     
     def to_dict(self):
-        """Converte a mensagem para dicionário."""
+        """Converts the message to a dictionary."""
         return {
             "id": self.id,
             "type": self.type,
@@ -69,23 +69,23 @@ class Message:
     }
     
     def to_json(self):
-        """Converte a mensagem para string JSON."""
+        """Converts the message to a JSON string."""
         return json.dumps(self.to_dict())
     
     def to_bytes(self):
-        """Converte a mensagem para bytes para transmissão na rede."""
+        """Converts the message to bytes for network transmission."""
         return self.to_json().encode('utf-8')
     
     @classmethod
     def from_dict(cls, data):
         """
-        Cria uma mensagem a partir de um dicionário.
+        Creates a message from a dictionary.
         
         Args:
-            data: Dicionário com os campos da mensagem
+            data: Dictionary with message fields
         
         Returns:
-            Instância de Message ou None se inválido
+            Message instance or None if invalid
         """
         try:
             return cls(
@@ -101,13 +101,13 @@ class Message:
     @classmethod
     def from_json(cls, json_str):
         """
-        Cria uma mensagem a partir de uma string JSON.
+        Creates a message from a JSON string.
         
         Args:
-            json_str: String JSON
+            json_str: JSON string
         
         Returns:
-            Instância de Message ou None se a análise falhar
+            Message instance or None if parsing fails
         """
         try:
             if isinstance(json_str, bytes):
@@ -120,45 +120,44 @@ class Message:
     @classmethod
     def from_bytes(cls, raw_bytes):
         """
-        Cria uma mensagem a partir de bytes brutos.
+        Creates a message from raw bytes.
         
         Args:
-            raw_bytes: Bytes recebidos da rede
+            raw_bytes: Bytes received from the network
         
         Returns:
-            Instância de Message ou None se a análise falhar
+            Message instance or None if parsing fails
         """
         return cls.from_json(raw_bytes)
     
     def get_type(self):
-        """Obtém o tipo da mensagem."""
+        """Gets the message type."""
         return self.type
     
     def get_payload(self):
-        """Obtém o payload da mensagem."""
+        """Gets the message payload."""
         return self.payload
     
     def get_src(self):
-        """Obtém o IP de origem."""
+        """Gets the source IP."""
         return self.srcip
     
     def get_dest(self):
-        """Obtém o IP de destino."""
+        """Gets the destination IP."""
         return self.destip
     
     def __str__(self):
-        """Representação em string da mensagem."""
+        """String representation of the message."""
         return f"Message(type={self.type}, src={self.srcip}, dest={self.destip}, id={self.id[:8]}...)"
     
     def __repr__(self):
-        """Representação detalhada."""
+        """Detailed representation."""
         return f"Message({self.to_dict()})"
 
 
 
     @classmethod
     def create_flood_message(cls, srcip, origin_flood ,flood_id=None, hop_count=0, video=None, start_timestamp=None,
-                             # --- CAMPOS ADICIONADOS AQUI ---
                              accumulated_latency=0, accumulated_jitter=0, accumulated_loss=0): 
         """Create a FLOOD message."""
         if start_timestamp is None:
@@ -169,7 +168,6 @@ class Message:
             "video": video,
             "origin_ip":origin_flood,
             "start_timestamp": start_timestamp,
-            # --- AGORA INCLUIDOS NO PAYLOAD ---
             "accumulated_latency": accumulated_latency,
             "accumulated_jitter": accumulated_jitter,
             "accumulated_loss": accumulated_loss
@@ -267,16 +265,15 @@ class Message:
         return cls(
             msg_type=MsgType.REGISTER,
             srcip=node_id,
-            destip=bootstrapper_ip,  #
+            destip=bootstrapper_ip,
             payload={
                 "node_id": node_id
             }
         )
     
-    # neigh vão ser o resultado de uma lista de vizinhos fornecida pelo bootstrapper
     @classmethod
     def create_neighbour_message(cls, srcip, destip, neighbours_ip):
-        """Create a NEIGHBOUR message."""
+        """Create a NEIGHBOUR message. Neighbors list provided by bootstrapper."""
         return cls(
             msg_type=MsgType.NEIGHBOUR,
             srcip=srcip,
@@ -286,9 +283,11 @@ class Message:
             }
         )
 
-    # envio e rececao de mensagens PING/PONG
+    # PING/PONG and PING_TEST methods (for path testing)
+    
     @classmethod
     def create_ping_message(cls, srcip, destip):
+        """Create a PING message."""
         return cls(
             msg_type=MsgType.PING,
             srcip=srcip,
@@ -297,6 +296,7 @@ class Message:
 
     @classmethod
     def create_pong_message(cls, srcip, destip):
+        """Create a PONG message."""
         return cls(
             msg_type=MsgType.PONG,
             srcip=srcip,
@@ -305,7 +305,7 @@ class Message:
     @classmethod
     def create_pingtest_message(cls, srcip, destip, video_name, current_path=None):
         """
-        Cria uma mensagem de PING que acumula o caminho.
+        Creates a PING_TEST message that accumulates the path traversed.
         """
         if current_path is None:
             current_path = []
@@ -316,7 +316,7 @@ class Message:
             destip=destip,
             payload={
                 "video": video_name,
-                "path": current_path # Lista que vai crescer: ['S1', 'N2', 'N5', ...]
+                "path": current_path # List that will grow: ['S1', 'N2', 'N5', ...]
             }
         )
 

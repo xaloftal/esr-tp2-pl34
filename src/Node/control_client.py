@@ -5,23 +5,21 @@ import sys
 import time
 import os
 from tkinter import Tk
-# --- NOVOS IMPORTS CRÍTICOS (Para evitar disco/cache) ---
 from io import BytesIO
 from PIL import Image
-# -------------------------------------------------------
 
 from aux_files.ClienteGUI import ClienteGUI
 from aux_files.RtpPacket import RtpPacket 
 from aux_files.aux_message import Message, MsgType
 from config import NODE_TCP_PORT, NODE_RTP_PORT, BOOTSTRAPPER_PORT, HEARTBEAT_INTERVAL, FAIL_TIMEOUT, MAX_FAILS
 
-# Estes não são usados, mas são mantidos para compatibilidade com o ClienteGUI
+# These are not used, but are kept for compatibility with the ClientGUI.
 CACHE_FILE_NAME = "cache-" 
 CACHE_FILE_EXT = ".jpg" 
 
 class ControlClient():
     """
-    Cliente: Gere a rede (TCP) e recebe o vídeo (UDP).
+    Client: Manages the network (TCP) and receives the video (UDP).
     """       
     
     def __init__(self, node_id, node_ip, bootstrapper_ip, video):
@@ -36,7 +34,7 @@ class ControlClient():
         self.neighbors = {}
         self.gui_callback = None
         
-        # --- Configuração RTP (UDP) ---
+        # --- Settings RTP (UDP) ---
         self.RTPport = NODE_RTP_PORT 
         self.rtp_socket = None
         self.video = video 
@@ -47,20 +45,20 @@ class ControlClient():
         self.last_alive = {} 
         self.fail_count = {} 
         
-        #  Registar e obter vizinhos
+        #  Register and get neighbors
         self.register_and_join() 
         
-        #  Iniciar Listener TCP (Control)
+        #  Start TCP Listener (Control)
         threading.Thread(target=self.listener_tcp, daemon=True).start()
 
-        # Iniciar Listener UDP (RTP/Video)
+        # Start UDP Listener (RTP/Video)
         self.open_rtp_port()
 
     # -------------------------------------------------------------------------
-    # GESTÃO RTP (UDP)
+    # MANAGEMENT RTP (UDP)
     # -------------------------------------------------------------------------
     def open_rtp_port(self):
-        """Abre o socket UDP para receber o vídeo."""
+        """Opens the UDP socket to receive the video."""
         try:
             self.rtp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.rtp_socket.settimeout(0.5) 
@@ -70,7 +68,7 @@ class ControlClient():
             print(f"[Cliente] Erro ao abrir socket RTP: {e}")
 
     def listen_rtp(self, gui_update_callback=None):
-        """RECEBE RTP e envia a imagem EM MEMÓRIA para a GUI."""
+        """Receives RTP and sends the image IN MEMORY to the GUI."""
         while True:
             try:
                 data, addr = self.rtp_socket.recvfrom(20480)
@@ -82,9 +80,8 @@ class ControlClient():
                     payload = rtpPacket.getFramePayload()
                     currFrameNbr = rtpPacket.seqNum()
                     
-                    # --- CORREÇÃO AQUI ---
-                    # Aceitamos se for maior (sequência normal)
-                    # OU se a diferença for muito grande (indica que o vídeo reiniciou ou trocámos para fonte resetada)
+                    # Accept if it's greater (normal sequence)
+                    # OR if the difference is very large (indicates video restarted or switched to a reset source)
                     if currFrameNbr > self.frameNbr or (self.frameNbr - currFrameNbr > 100):
                         self.frameNbr = currFrameNbr
                         
@@ -98,11 +95,10 @@ class ControlClient():
             except socket.timeout:
                 continue
             except Exception as e:
-                # print(f"[Cliente] RTP Interrompido: {e}")
                 break
 
     def write_frame(self, data):
-        """Escreve o payload (imagem JPEG) num ficheiro temporário."""
+        """Writes the payload (JPEG image) to a temporary file."""
         cachename = CACHE_FILE_NAME + str(self.sessionId) + CACHE_FILE_EXT
         with open(cachename, "wb") as file:
             file.write(data)
@@ -219,7 +215,7 @@ class ControlClient():
                     self.send_tcp_message(neigh, Message.create_alive_message(self.node_ip, neigh))
     
     def stop_stream(self):
-        """Envia pedido para parar o stream para TODOS os vizinhos ativos."""
+        """Sends a request to stop the stream for ALL active neighbors."""
         if not self.video:
             return
 
@@ -243,7 +239,7 @@ class ControlClient():
 
 if __name__ == "__main__":    
     if len(sys.argv) < 4:
-        print("Uso: python3 control_client.py NODE_ID NODE_IP BOOTSTRAPPER_IP [VIDEO]")
+        print("Use: python3 control_client.py NODE_ID NODE_IP BOOTSTRAPPER_IP [VIDEO]")
         sys.exit(1)
         
     node_id = sys.argv[1]

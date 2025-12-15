@@ -1,8 +1,8 @@
-# Ficheiro: src/Bootstrapper/config.py
+# File: src/Bootstrapper/config.py
 
-# IP em que o bootstrapper escuta
-# "0.0.0.0" é o mais robusto, significa que escuta em todas as interfaces.
+# IP address where the bootstrapper listens.
+# "0.0.0.0" is the most robust setting, meaning it listens on all available interfaces.
 HOST = "0.0.0.0" 
 
-# Porta em que o bootstrapper escuta
+# Port number where the bootstrapper listens.
 PORT = 5000

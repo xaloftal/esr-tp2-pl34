@@ -1,113 +1,74 @@
-# Ficheiro: src/Bootstrapper/overlay_nodes.py
+# File: src/Bootstrapper/overlay_nodes.py
 
-# Dicionário que mapeia o IP de um nó à lista de IPs dos seus vizinhos
-# Esta é a topologia "manual" lida pelo bootstrapper.
-
+# Dictionary that maps a node's IP to the list of its neighbors' IPs.
+# This manually defines the overlay topology read by the bootstrapper.
 node_overlay_c1 = {
     # n1
     "10.0.0.20": ["10.0.0.1"],
-    
-    #n2
+    # n2
     "10.0.1.20" : ["10.0.0.1"],
-    
-    #n3    
+    # n3   
     "10.0.0.1":["10.0.0.20", "10.0.1.20", "10.0.2.10"],
-    
-    #n4
+    # n4
     "10.0.2.10": ["10.0.0.1"]    
 }
 
 node_overlay_c2 = {
-    # n1 (cliente)
+    # n1 (client)
     "10.0.0.20": ["10.0.3.1"],
-
-    # n2 (cliente)
+    # n2 (client)
     "10.0.1.20": ["10.0.4.2"],
-
     # n3 (router)
     "10.0.3.1": ["10.0.0.20", "10.0.4.2", "10.0.5.1"],
-
     # n4 (router)
     "10.0.4.2": ["10.0.1.20", "10.0.3.1", "10.0.5.1"],
-
-    # n5 (servidor OU bootstrapper OU node intermédio)
+    # n5 (server OU bootstrapper OU intermediate node)
     "10.0.5.1": ["10.0.3.1", "10.0.4.2", "10.0.5.20"],
-
-    # n6 (cliente final)
+    # n6 (client final)
     "10.0.5.20": ["10.0.5.1"]
 }
 
 
-
-
-
-
 node_overlay_c3 = {    
     #Streamer
-    # conhece O2
-    "10.0.19.10" : ["10.0.17.2"],
-    
     # O2
-    # conhece streamer, O3, O7
+    "10.0.19.10" : ["10.0.17.2"],
+    # O2
     "10.0.17.2":["10.0.19.10", "10.0.18.2", "10.0.7.2"],
-    
     # O3
-    # conhece O2, C1, O5
     "10.0.18.2":["10.0.17.2", "10.0.10.21", "10.0.5.2"],
-    
     # O5
-    # conhece O3, C5, C4, O6, O7
     "10.0.5.2":["10.0.18.2", "10.0.0.21", "10.0.0.20", "10.0.3.1", "10.0.7.2"],
-    
     # O6
-    # conhece O5, C3, O7
     "10.0.3.1":["10.0.5.2", "10.0.2.20", "10.0.7.2"],
-    
     # O7
-    # conhece O2, C2, O5, O6
     "10.0.7.2":["10.0.17.2", "10.0.20.21", "10.0.5.2", "10.0.3.1"],
-    
     # C1 
-    # conhece O3
     "10.0.10.21":["10.0.18.2"],
-    
     # C2
-    # conhece O7
     "10.0.20.21":["10.0.7.2"],
-    
     # C3
-    # conhece O6
     "10.0.2.20":["10.0.3.1"],
-    
     # C4
-    # conhece O5
     "10.0.0.20":["10.0.5.2"],
-    
     # C5
-    # conhece O5
     "10.0.0.21":["10.0.5.2"],
 }
 
 
 node_overlay_c4 = {
-    # n1 (cliente)
+    # n1 (client)
     "10.0.0.20": ["10.0.3.1"],
-
-    # n2 (cliente)
+    # n2 (client)
     "10.0.1.20": ["10.0.4.2"],
-
     # n3 (router)
     "10.0.3.1": ["10.0.0.20", "10.0.4.2", "10.0.5.1"],
-
     # n4 (router)
     "10.0.4.2": ["10.0.1.20", "10.0.3.1", "10.0.5.1","10.0.6.10"],
-
-    # n5 (servidor OU bootstrapper OU node intermédio)
+    # n5 (servidor OU bootstrapper OU intermediate node)
     "10.0.5.1": ["10.0.3.1", "10.0.4.2", "10.0.5.20"],
-
-    # n6 (cliente final)
+    # n6 (client final)
     "10.0.5.20": ["10.0.5.1"],
-
     "10.0.6.10": ["10.0.4.2"]
 
 }
@@ -115,48 +76,27 @@ node_overlay_c4 = {
 
 node_overlay_c5 = {    
     #Streamer
-    # conhece O2
     "10.0.19.10" : ["10.0.17.2"],
     #Streamer
-     # conhece O5
     "10.0.21.10" : ["10.0.5.2"],
     # O2
-    # conhece streamer, O3, O7
     "10.0.17.2":["10.0.19.10", "10.0.18.2", "10.0.7.2"],
-    
     # O3
-    # conhece O2, C1, O5
-    "10.0.18.2":["10.0.17.2", "10.0.10.21", "10.0.5.2"],
-    
+    "10.0.18.2":["10.0.17.2", "10.0.10.21", "10.0.5.2"],    
     # O5
-    # conhece O3, C5, C4, O6, O7
-    "10.0.5.2":["10.0.18.2", "10.0.0.21", "10.0.0.20", "10.0.3.1", "10.0.7.2","10.0.21.10"],
-    
+    "10.0.5.2":["10.0.18.2", "10.0.0.21", "10.0.0.20", "10.0.3.1", "10.0.7.2","10.0.21.10"],  
     # O6
-    # conhece O5, C3, O7
     "10.0.3.1":["10.0.5.2", "10.0.2.20", "10.0.7.2"],
-    
     # O7
-    # conhece O2, C2, O5, O6
     "10.0.7.2":["10.0.17.2", "10.0.20.21", "10.0.5.2", "10.0.3.1"],
-    
     # C1 
-    # conhece O3
     "10.0.10.21":["10.0.18.2"],
-    
     # C2
-    # conhece O7
     "10.0.20.21":["10.0.7.2"],
-    
     # C3
-    # conhece O6
-    "10.0.2.20":["10.0.3.1"],
-    
+    "10.0.2.20":["10.0.3.1"], 
     # C4
-    # conhece O5
     "10.0.0.20":["10.0.5.2"],
-    
     # C5
-    # conhece O5
     "10.0.0.21":["10.0.5.2"]
 }

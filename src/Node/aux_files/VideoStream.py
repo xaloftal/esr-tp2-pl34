@@ -23,6 +23,6 @@ class VideoStream:
         return self.frameNum
     
     def rewind(self):
-        """Volta ao início do vídeo para fazer loop."""
+        """Go back to the start of the video to loop."""
         self.file.seek(0)
         self.frameNum = 0

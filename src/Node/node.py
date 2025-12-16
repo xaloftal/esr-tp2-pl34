@@ -218,6 +218,8 @@ class Node:
 
         elif msg_type == MsgType.PING_TEST:
             self.handle_pingtest_message(msg)
+        elif msg_type == MsgType.TEARDOWN:
+            self.handle_teardown(msg)
 
         else:
             print(warning_log(

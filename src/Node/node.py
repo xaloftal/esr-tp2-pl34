@@ -557,15 +557,13 @@ class Node:
         self.leave_cache.discard(neigh_ip)
 
         print(route_log(
-            f"[{self.node_id}] Neighbor {neigh_ip} joined the network."
-        ))
+            f"[{self.node_id}] O vizinho {neigh_ip} juntou-se à rede.")
+            )
 
         with self.lock:
             # Reactivate neighbor
             self.neighbors[neigh_ip] = True
-            print(route_log(
-                f"[{self.node_id}] Neighbor {neigh_ip} marked as active (JOIN)."
-            ))
+            print(route_log(f"[{self.node_id}] Vizinho {neigh_ip} marcado como ativo (JOIN)"))
 
             # Reset heartbeat
             self.last_alive[neigh_ip] = time.time()
@@ -1059,8 +1057,10 @@ class Node:
                 daemon=True
             ).start()
             return
-
-        # 6. Forward RTP to downstream clients
+        num_clients = len(self.downstream_clients[video_name])
+        client_ips = list(self.downstream_clients[video_name])
+        print(rtp_forward_log(video_name, 
+           f"[{self.node_id}] RTP FWD: '{video_name}' seq={current_seq} from {sender_ip} → {num_clients} client(s): {client_ips}"))
         for client_ip in self.downstream_clients[video_name]:
             self.rtp_socket.sendto(raw_data, (client_ip, self.rtp_port))
     
